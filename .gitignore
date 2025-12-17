@@ -1,0 +1,28 @@
+# Unity 자동 생성(생성물) 폴더
+[Ll]ibrary/
+[Tt]emp/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Oo]bj/
+
+# 사용자/IDE가 만드는 개인 설정 파일(프로젝트 파일 포함)
+*.csproj
+*.unityproj
+*.sln
+*.user
+*.userprefs
+*.pidb
+*.booproj
+
+# 빌드 산출물/패키지/내보내기 파일
+sysinfo.txt
+*.apk
+*.aab
+*.exe
+*.app
+*.unitypackage
+
+# IDE 설정 폴더
+.vscode/
+.idea/
