@@ -1,32 +1,45 @@
 using UnityEngine;
 
+/// <summary>
+/// 메시 바운드를 셰이더 파라미터로 자동 설정합니다.
+/// SidePlanarUnlitURP 셰이더용.
+/// </summary>
 [RequireComponent(typeof(Renderer))]
 public class ApplySidePlanarBounds : MonoBehaviour
 {
-    [SerializeField] private string minY = "_MinY";
-    [SerializeField] private string maxY = "_MaxY";
-    [SerializeField] private string minZ = "_MinZ";
-    [SerializeField] private string maxZ = "_MaxZ";
+    [Header("셰이더 파라미터 이름")]
+    [SerializeField] private string minYParam = "_MinY";
+    [SerializeField] private string maxYParam = "_MaxY";
+    [SerializeField] private string minZParam = "_MinZ";
+    [SerializeField] private string maxZParam = "_MaxZ";
 
     void Start()
     {
-        var r = GetComponent<Renderer>();
-        // Mesh bounds는 로컬 기준이 필요해서 MeshFilter/SkinnedMeshRenderer에서 가져오는 게 더 정확함
-        Bounds b;
+        var renderer = GetComponent<Renderer>();
+        Bounds bounds = GetMeshBounds(renderer);
 
-        var smr = r as SkinnedMeshRenderer;
+        var mat = renderer.material;
+        mat.SetFloat(minYParam, bounds.min.y);
+        mat.SetFloat(maxYParam, bounds.max.y);
+        mat.SetFloat(minZParam, bounds.min.z);
+        mat.SetFloat(maxZParam, bounds.max.z);
+
+        Debug.Log($"[ApplySidePlanarBounds] Y: {bounds.min.y}~{bounds.max.y}, Z: {bounds.min.z}~{bounds.max.z}");
+    }
+
+    private Bounds GetMeshBounds(Renderer renderer)
+    {
+        // SkinnedMeshRenderer
+        var smr = renderer as SkinnedMeshRenderer;
         if (smr != null && smr.sharedMesh != null)
-            b = smr.sharedMesh.bounds;
-        else
-        {
-            var mf = GetComponent<MeshFilter>();
-            b = (mf != null && mf.sharedMesh != null) ? mf.sharedMesh.bounds : new Bounds(Vector3.zero, Vector3.one);
-        }
+            return smr.sharedMesh.bounds;
 
-        var mat = r.material;
-        mat.SetFloat(minY, b.min.y);
-        mat.SetFloat(maxY, b.max.y);
-        mat.SetFloat(minZ, b.min.z);
-        mat.SetFloat(maxZ, b.max.z);
+        // MeshFilter
+        var mf = GetComponent<MeshFilter>();
+        if (mf != null && mf.sharedMesh != null)
+            return mf.sharedMesh.bounds;
+
+        // 기본값
+        return new Bounds(Vector3.zero, Vector3.one);
     }
 }

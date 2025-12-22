@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl:*)",
+      "Bash(unzip:*)",
+      "mcp__mcp-unity__execute_menu_item",
+      "mcp__mcp-unity__get_gameobject",
+      "mcp__mcp-unity__update_component",
+      "mcp__mcp-unity__update_gameobject"
+    ]
+  }
+}

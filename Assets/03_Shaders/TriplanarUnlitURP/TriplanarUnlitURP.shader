@@ -8,12 +8,18 @@ Shader "LiveSketch/SidePlanarUnlitURP"
         _SideThreshold ("Side Threshold", Range(0,1)) = 0.6
         _EdgeSoftness ("Edge Softness", Range(0,0.5)) = 0.08
 
-        _UInset ("U Inset (Crop Left/Right)", Range(0,0.49)) = 0.0
-        _VInset ("V Inset (Crop Top/Bottom)", Range(0,0.49)) = 0.0
+        [Header(Position Adjust)]
+        _OffsetX ("Offset X (좌우)", Range(-1,1)) = 0
+        _OffsetY ("Offset Y (상하)", Range(-1,1)) = 0
+        _ScaleX ("Scale X (가로 크기)", Range(0.1, 3)) = 1
+        _ScaleY ("Scale Y (세로 크기)", Range(0.1, 3)) = 1
+        _Rotation ("Rotation (회전)", Range(-180, 180)) = 0
 
-        _UOffset ("U Offset", Range(-0.5,0.5)) = 0
-        _VOffset ("V Offset", Range(-0.5,0.5)) = 0
+        [Header(Flip Options)]
+        [Toggle] _FlipX ("Flip X (좌우 반전)", Float) = 0
+        [Toggle] _FlipY ("Flip Y (상하 반전)", Float) = 0
 
+        [Header(Bounds Auto)]
         _MinY ("MinY", Float) = -1
         _MaxY ("MaxY", Float) = 1
         _MinZ ("MinZ", Float) = -1
@@ -29,6 +35,8 @@ Shader "LiveSketch/SidePlanarUnlitURP"
             Name "Forward"
             Tags { "LightMode"="UniversalForward" }
 
+            Cull Off
+
             HLSLPROGRAM
             #pragma vertex vert
             #pragma fragment frag
@@ -42,8 +50,10 @@ Shader "LiveSketch/SidePlanarUnlitURP"
                 float _SideThreshold;
                 float _EdgeSoftness;
 
-                float _UInset, _VInset;
-                float _UOffset, _VOffset;
+                float _OffsetX, _OffsetY;
+                float _ScaleX, _ScaleY;
+                float _Rotation;
+                float _FlipX, _FlipY;
 
                 float _MinY, _MaxY;
                 float _MinZ, _MaxZ;
@@ -75,24 +85,54 @@ Shader "LiveSketch/SidePlanarUnlitURP"
             {
                 float3 n = normalize(IN.normalWS);
 
+                // 측면만 텍스처 적용
                 float side = abs(n.x);
                 float soft = max(_EdgeSoftness, 1e-5);
                 float mask = smoothstep(_SideThreshold, _SideThreshold + soft, side);
 
+                // Y좌표 → V (상하), Z좌표 → U (앞뒤/좌우)
                 float y01 = saturate((IN.positionOS.y - _MinY) / max(_MaxY - _MinY, 1e-5));
                 float z01 = saturate((IN.positionOS.z - _MinZ) / max(_MaxZ - _MinZ, 1e-5));
 
-                float u = lerp(_UInset, 1.0 - _UInset, z01) + _UOffset;
-                float v = lerp(_VInset, 1.0 - _VInset, y01) + _VOffset;
+                // U = 좌우 (Z축 기준), V = 상하 (Y축 기준)
+                float u = z01;
+                float v = y01;
 
-                u = clamp(u, 0.001, 0.999);
-                v = clamp(v, 0.001, 0.999);
+                // 회전 적용 (중심 기준, 도 단위) - 스케일보다 먼저!
+                float rad = _Rotation * 3.14159265 / 180.0;
+                float cosR = cos(rad);
+                float sinR = sin(rad);
+                float cu = u - 0.5;
+                float cv = v - 0.5;
+                u = cu * cosR - cv * sinR + 0.5;
+                v = cu * sinR + cv * cosR + 0.5;
 
-                float2 uv = float2(u, v);
+                // 스케일 적용 (중심 기준, X/Y 개별)
+                // 값이 커지면 텍스처가 커짐 (확대)
+                u = (u - 0.5) * _ScaleX + 0.5;
+                v = (v - 0.5) * _ScaleY + 0.5;
 
-                half4 tex = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, uv) * _Tint;
+                // 오프셋 적용
+                u += _OffsetX;
+                v += _OffsetY;
 
-                return lerp(half4(1,1,1,1), tex, mask);
+                // 반전
+                if (_FlipX > 0.5) u = 1.0 - u;
+                if (_FlipY > 0.5) v = 1.0 - v;
+
+                // UV 범위 체크 - 벗어나면 흰색
+                bool outOfBounds = (u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0);
+
+                // 클램프 (샘플링용)
+                float uClamped = clamp(u, 0.001, 0.999);
+                float vClamped = clamp(v, 0.001, 0.999);
+
+                half4 tex = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, float2(uClamped, vClamped)) * _Tint;
+
+                // 범위 밖이면 흰색, 아니면 텍스처
+                half4 finalColor = outOfBounds ? half4(1,1,1,1) : tex;
+
+                return lerp(half4(1,1,1,1), finalColor, mask);
             }
             ENDHLSL
         }

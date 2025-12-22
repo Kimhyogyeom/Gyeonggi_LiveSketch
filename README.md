@@ -1,3 +1,5 @@
+## 필수
+
 1. SCAN 소프트웨어 다운받기 https://scansnap.com/d/
 
 ## QR
@@ -16,4 +18,18 @@
 
 ---
 
-- U Inset (Crop Left/Right) 조절 : 좌/우 늘리기
+- U Inset (Crop Left/Right) 조절 : 좌/우 늘리기 (10종 + 파랑이)
+- ScanSnap Home - Scan 설정하기 : 미리보기 삭제 및 즉시 저장되게
+  (회전, 컬러 Auto 조정) : 추후 Live 프로필 내보내기로 제공 예정
+
+- 모델 및 도안 전달 예정 : 18 ~ 19일
+- 준공 완료일 12/31 (예정)
+
+---
+
+뜸부기 프리팹의 머티리얼 선택
+Inspector에서:
+U Offset: -0.5 ~ 0.5 (좌우 이동)
+V Offset: -0.5 ~ 0.5 (상하 이동)
+U Inset: 0 ~ 0.49 (좌우 크롭)
+V Inset: 0 ~ 0.49 (상하 크롭)
