@@ -207,10 +207,25 @@ public class ScanProcessor : MonoBehaviour
 
         if (renderer != null)
         {
-            // 새 머티리얼 인스턴스 생성하여 텍스처 적용
-            // 이렇게 하면 각 모델이 독립적인 텍스처를 가짐
-            renderer.material.SetTexture(textureProperty, texture);
-            Log($"텍스처 적용 완료: {renderer.name}");
+            // 머티리얼 배열에서 마지막 머티리얼 (스캔 텍스처용)에만 적용
+            Material[] materials = renderer.sharedMaterials;
+
+            if (materials.Length > 1)
+            {
+                // Material 1 = 스캔 텍스처 (투명 쉐이더)
+                // 인스턴스 생성해서 텍스처 적용
+                materials[1] = new Material(materials[1]);
+                materials[1].SetTexture(textureProperty, texture);
+                renderer.materials = materials;
+
+                Log($"텍스처 적용 완료 (Material[1]): {renderer.name}");
+            }
+            else
+            {
+                // 머티리얼이 1개만 있으면 기존 방식 (하위 호환)
+                renderer.material.SetTexture(textureProperty, texture);
+                Log($"텍스처 적용 완료 (단일 Material): {renderer.name}");
+            }
         }
         else
         {

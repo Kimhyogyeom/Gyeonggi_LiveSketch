@@ -8,6 +8,10 @@ Shader "LiveSketch/SidePlanarUnlitURP"
         _SideThreshold ("Side Threshold", Range(0,1)) = 0.6
         _EdgeSoftness ("Edge Softness", Range(0,0.5)) = 0.08
 
+        [Header(Transparency)]
+        _WhiteThreshold ("White Threshold (투명 처리)", Range(0.5, 1.0)) = 0.95
+        _BaseColor ("Base Color (색칠 안한 부분 색)", Color) = (1, 1, 1, 1)
+
         [Header(Position Adjust)]
         _OffsetX ("Offset X (좌우)", Range(-1,1)) = 0
         _OffsetY ("Offset Y (상하)", Range(-1,1)) = 0
@@ -28,19 +32,22 @@ Shader "LiveSketch/SidePlanarUnlitURP"
 
     SubShader
     {
-        Tags { "RenderPipeline"="UniversalRenderPipeline" "RenderType"="Opaque" "Queue"="Geometry" }
+        Tags { "RenderPipeline"="UniversalRenderPipeline" "RenderType"="Transparent" "Queue"="Transparent" }
 
         Pass
         {
             Name "Forward"
             Tags { "LightMode"="UniversalForward" }
 
+            Blend SrcAlpha OneMinusSrcAlpha
+            ZWrite Off
             Cull Off
 
             HLSLPROGRAM
             #pragma vertex vert
             #pragma fragment frag
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 
             TEXTURE2D(_MainTex);
             SAMPLER(sampler_MainTex);
@@ -49,6 +56,8 @@ Shader "LiveSketch/SidePlanarUnlitURP"
                 float4 _Tint;
                 float _SideThreshold;
                 float _EdgeSoftness;
+                float _WhiteThreshold;
+                float4 _BaseColor;
 
                 float _OffsetX, _OffsetY;
                 float _ScaleX, _ScaleY;
@@ -129,10 +138,32 @@ Shader "LiveSketch/SidePlanarUnlitURP"
 
                 half4 tex = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, float2(uClamped, vClamped)) * _Tint;
 
-                // 범위 밖이면 흰색, 아니면 텍스처
-                half4 finalColor = outOfBounds ? half4(1,1,1,1) : tex;
+                // 흰색 판단 (색칠 안한 부분) - Inspector에서 조정 가능
+                float luminance = dot(tex.rgb, float3(0.299, 0.587, 0.114));
+                bool isWhite = luminance > _WhiteThreshold;
 
-                return lerp(half4(1,1,1,1), finalColor, mask);
+                // 범위 밖이거나 흰색이면 Base Color로 (반투명 가능)
+                if (outOfBounds || isWhite || mask < 0.01)
+                {
+                    // Base Color 반환 (알파 조정 가능)
+                    return _BaseColor;
+                }
+
+                // === 색칠한 부분만 명암 적용 ===
+                Light mainLight = GetMainLight();
+                float3 normal = normalize(IN.normalWS);
+
+                // Lambert diffuse
+                float NdotL = saturate(dot(normal, mainLight.direction));
+
+                // Ambient + Diffuse
+                float3 lighting = 0.4 + (mainLight.color * NdotL * 0.6);
+
+                // 최종 색상 = 텍스처 * 명암 * 마스크
+                half3 finalColor = tex.rgb * lighting;
+                half alpha = mask; // 측면만 보이게
+
+                return half4(finalColor, alpha);
             }
             ENDHLSL
         }
