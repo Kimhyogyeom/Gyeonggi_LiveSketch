@@ -6,7 +6,20 @@
       "mcp__mcp-unity__execute_menu_item",
       "mcp__mcp-unity__get_gameobject",
       "mcp__mcp-unity__update_component",
-      "mcp__mcp-unity__update_gameobject"
+      "mcp__mcp-unity__update_gameobject",
+      "Bash(cat:*)",
+      "Bash(git add:*)",
+      "Bash(git reset:*)",
+      "Bash(git checkout:*)",
+      "Bash(git push)",
+      "Bash(git config:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\n임시저장: 빈 영역 채우기 기능 추가 \\(회색/윤곽선/주요색상 모드\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push:*)",
+      "Bash(git rev-list:*)",
+      "Bash(git cat-file:*)",
+      "Bash(sort:*)",
+      "Bash(git rm:*)",
+      "Bash(git commit:*)"
     ]
   }
 }

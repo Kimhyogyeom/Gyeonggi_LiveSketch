@@ -2,25 +2,33 @@ using UnityEngine;
 using System.Collections;
 
 /// <summary>
-/// 모델 스폰 시 파티클 순차 재생
-/// 파티클 A (5초) → 파티클 B (2초)
+/// 모델 스폰 시 파티클 효과
+/// 파티클 재생 → 타이머 완료 → 파티클 사라짐 → 모델 등장
 /// </summary>
 public class SpawnParticleController : MonoBehaviour
 {
-    [Header("파티클 프리팹 (3~4개 등록)")]
-    [SerializeField] private GameObject[] particleA_Prefabs;
-    [SerializeField] private GameObject[] particleB_Prefabs;
+    [Header("=== 스폰 파티클 ===")]
+    [Tooltip("모델 등장 전 재생할 파티클 프리팹")]
+    [SerializeField] private GameObject spawnParticlePrefab;
 
-    [Header("재생 시간")]
-    [SerializeField] private float particleA_Duration = 5f;
-    [SerializeField] private float particleB_Duration = 2f;
+    [Tooltip("파티클 재생 시간 (초) - 이 시간 후 모델 등장")]
+    [Range(0.5f, 10f)]
+    [SerializeField] private float spawnDelay = 2f;
 
-    [Header("위치 설정")]
-    [SerializeField] private bool useModelPosition = true;
-    [SerializeField] private Vector3 fixedPosition = Vector3.zero;
+    [Header("=== 등장 파티클 (선택) ===")]
+    [Tooltip("모델 등장 시 추가 파티클 (없으면 비워두기)")]
+    [SerializeField] private GameObject appearParticlePrefab;
+
+    [Tooltip("등장 파티클 재생 시간")]
+    [Range(0.5f, 5f)]
+    [SerializeField] private float appearDuration = 1f;
+
+    [Header("=== 위치 설정 ===")]
+    [Tooltip("파티클 위치 오프셋")]
     [SerializeField] private Vector3 positionOffset = Vector3.zero;
 
-    [Header("모델 매니저 연결")]
+    [Header("=== 연결 ===")]
+    [Tooltip("AnimalModelManager 연결")]
     [SerializeField] private AnimalModelManager modelManager;
 
     private void OnEnable()
@@ -39,52 +47,55 @@ public class SpawnParticleController : MonoBehaviour
     {
         if (model == null) return;
 
-        Vector3 spawnPos;
-        if (useModelPosition)
-            spawnPos = model.transform.position + positionOffset;
-        else
-            spawnPos = fixedPosition + positionOffset;
+        // 파티클 프리팹 없으면 바로 모델 표시
+        if (spawnParticlePrefab == null)
+        {
+            model.SetActive(true);
+            return;
+        }
 
-        // 모델 숨기기 (파티클 A 동안)
+        Vector3 spawnPos = model.transform.position + positionOffset;
+
+        // 모델 숨기기
         model.SetActive(false);
 
-        StartCoroutine(PlayParticleSequence(spawnPos, model));
+        // 파티클 시퀀스 시작
+        StartCoroutine(PlaySpawnSequence(spawnPos, model));
     }
 
-    private IEnumerator PlayParticleSequence(Vector3 position, GameObject model)
+    private IEnumerator PlaySpawnSequence(Vector3 position, GameObject model)
     {
-        // 파티클 A 재생 (랜덤 1개)
-        GameObject activeA = SpawnRandomParticle(particleA_Prefabs, position);
+        // 1. 스폰 파티클 재생
+        GameObject spawnParticle = SpawnParticle(spawnParticlePrefab, position);
 
-        yield return new WaitForSeconds(particleA_Duration);
+        // 2. 대기
+        yield return new WaitForSeconds(spawnDelay);
 
-        // 파티클 A 정지 및 삭제
-        if (activeA != null)
-            Destroy(activeA);
+        // 3. 스폰 파티클 삭제
+        if (spawnParticle != null)
+            Destroy(spawnParticle);
 
-        // 모델 나타나기 + 파티클 B 재생
+        // 4. 모델 등장!
         if (model != null)
             model.SetActive(true);
 
-        GameObject activeB = SpawnRandomParticle(particleB_Prefabs, position);
+        // 5. 등장 파티클 (선택)
+        if (appearParticlePrefab != null)
+        {
+            GameObject appearParticle = SpawnParticle(appearParticlePrefab, position);
 
-        yield return new WaitForSeconds(particleB_Duration);
+            yield return new WaitForSeconds(appearDuration);
 
-        // 파티클 B 정지 및 삭제
-        if (activeB != null)
-            Destroy(activeB);
+            if (appearParticle != null)
+                Destroy(appearParticle);
+        }
     }
 
-    private GameObject SpawnRandomParticle(GameObject[] prefabs, Vector3 position)
+    private GameObject SpawnParticle(GameObject prefab, Vector3 position)
     {
-        if (prefabs == null || prefabs.Length == 0) return null;
+        if (prefab == null) return null;
 
-        // 랜덤 인덱스 선택
-        int randomIndex = Random.Range(0, prefabs.Length);
-
-        if (prefabs[randomIndex] == null) return null;
-
-        GameObject instance = Instantiate(prefabs[randomIndex], position, Quaternion.identity);
+        GameObject instance = Instantiate(prefab, position, Quaternion.identity);
 
         // ParticleSystem 자동 재생
         var ps = instance.GetComponent<ParticleSystem>();

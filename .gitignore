@@ -26,3 +26,9 @@ sysinfo.txt
 # IDE 설정 폴더
 .vscode/
 .idea/
+
+# 대용량 Terrain 에셋 (GitHub 100MB 제한)
+Assets/TerrainDemoScene_URP/
+
+# Claude 임시 파일
+tmpclaude-*

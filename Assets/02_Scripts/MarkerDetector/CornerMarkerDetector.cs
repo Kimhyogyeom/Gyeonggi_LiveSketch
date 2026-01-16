@@ -20,10 +20,12 @@ public static class CornerMarkerDetector
     }
 
     // 설정값
-    private const float BLACK_THRESHOLD = 0.3f;      // 검은색 판단 임계값
+    private const float BLACK_THRESHOLD = 0.3f;      // 검은색 판단 임계값 (밝기)
+    private const float SATURATION_THRESHOLD = 0.15f; // 채도 임계값 - 색칠된 부분 무시용
     private const float SEARCH_RATIO = 0.25f;        // 각 모서리 탐색 영역 비율
     private const int MIN_MARKER_SIZE = 20;          // 최소 마커 크기 (px)
     private const float MARKER_OFFSET = 0.02f;       // 마커 안쪽 여백 (2%)
+    private const float TOP_EXTRA_OFFSET = 0.08f;   // 상단 추가 여백 (텍스트 제외용)
 
     /// <summary>
     /// 4개 모서리 마커 감지
@@ -64,7 +66,7 @@ public static class CornerMarkerDetector
         float left = Mathf.Max(result.bottomLeft.x, result.topLeft.x) + MARKER_OFFSET;
         float right = Mathf.Min(result.bottomRight.x, result.topRight.x) - MARKER_OFFSET;
         float bottom = Mathf.Max(result.bottomLeft.y, result.bottomRight.y) + MARKER_OFFSET;
-        float top = Mathf.Min(result.topLeft.y, result.topRight.y) - MARKER_OFFSET;
+        float top = Mathf.Min(result.topLeft.y, result.topRight.y) - MARKER_OFFSET - TOP_EXTRA_OFFSET;
 
         result.sketchBounds = new Rect(left, bottom, right - left, top - bottom);
 
@@ -74,6 +76,7 @@ public static class CornerMarkerDetector
 
     /// <summary>
     /// 지정 영역에서 검은색 마커 중심 찾기
+    /// 색칠된 부분(채도 있음)은 무시하고, 순수한 검은색(채도 없음 + 어두움)만 인식
     /// </summary>
     private static Vector2Int FindMarkerCenter(
         Color[] pixels, int texW, int texH,
@@ -87,9 +90,15 @@ public static class CornerMarkerDetector
             for (int x = startX; x < startX + searchW && x < texW; x++)
             {
                 var pixel = pixels[y * texW + x];
-                float brightness = (pixel.r + pixel.g + pixel.b) / 3f;
 
-                if (brightness < BLACK_THRESHOLD)
+                // HSV로 변환해서 채도 확인
+                Color.RGBToHSV(pixel, out float h, out float s, out float v);
+
+                // 순수한 검은색 마커: 채도 낮음(무채색) + 밝기 낮음(어두움)
+                // 색칠된 부분(채도 있음)은 무시!
+                bool isBlackMarker = s < SATURATION_THRESHOLD && v < BLACK_THRESHOLD;
+
+                if (isBlackMarker)
                 {
                     blackCount++;
                     sumX += x;

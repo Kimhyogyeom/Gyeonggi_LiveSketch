@@ -2,46 +2,75 @@ using UnityEngine;
 
 /// <summary>
 /// 스캔 파이프라인 메인 컨트롤러
-/// A4 가로 방향 스캔 기준 (QR코드: 우상단, 마커: 스케치 영역 네 모서리)
 ///
-/// 처리 흐름:
-/// 1. 스캔 이미지 수신
-/// 2. QR 코드 위치 감지 → 이미지 방향 자동 보정
-/// 3. QR 텍스트로 해당 모델 스폰
-/// 4. 마커 영역 기준 스케치 영역 크롭
-/// 5. 테두리 제거 → 컬러만 추출
-/// 6. 새로 스폰된 모델에만 텍스처 적용 (기존 모델 유지)
+/// [파이프라인 흐름]
+/// 1. 스캔 이미지 수신 (ScanFolderWatcher)
+/// 2. QR 코드 인식 → 이미지 방향 보정 (ImageOrientationCorrector)
+/// 3. QR 텍스트로 해당 동물 모델 스폰 (AnimalModelManager)
+/// 4. 마커 기준 스케치 영역 크롭 (CornerMarkerDetector)
+/// 5. 테두리 제거 + 컬러 추출 (ColorExtractor)
+/// 6. 3D 모델에 텍스처 적용 (SideMirrorBlend 쉐이더)
 /// </summary>
 public class ScanProcessor : MonoBehaviour
 {
-    [Header("필수 참조")]
+    [Header("=== 필수 연결 ===")]
+    [Tooltip("스캔 폴더 감시 컴포넌트")]
     [SerializeField] private ScanFolderWatcher watcher;
+
+    [Tooltip("동물 모델 관리 컴포넌트")]
     [SerializeField] private AnimalModelManager modelManager;
 
-    [Header("Triplanar 쉐이더")]
-    [Tooltip("Triplanar 투영 쉐이더 (LiveSketch/SimpleTriplanar)")]
-    [SerializeField] private Shader triplanarShader;
+    [Tooltip("텍스처 매핑 쉐이더")]
+    [SerializeField] private Shader sideMirrorShader;
 
+    [Header("=== UV 매핑 설정 ===")]
+    [Tooltip("텍스처 좌우 위치 조정")]
+    [Range(-1f, 1f)]
+    [SerializeField] private float uvOffsetX = 0.06f;
 
-    [Header("크롭 설정 (A4 가로 기준)")]
-    [Tooltip("4개 모서리 마커 자동 감지 사용")]
+    [Tooltip("텍스처 상하 위치 조정")]
+    [Range(-1f, 1f)]
+    [SerializeField] private float uvOffsetY = -0.019f;
+
+    [Tooltip("텍스처 좌우 크기 (작을수록 넓게 펼쳐짐)")]
+    [Range(0.1f, 2f)]
+    [SerializeField] private float uvScaleX = 0.52f;
+
+    [Tooltip("텍스처 상하 크기")]
+    [Range(0.1f, 2f)]
+    [SerializeField] private float uvScaleY = 1.02f;
+
+    [Header("=== 이미지 크롭 설정 ===")]
+    [Tooltip("코너 마커 자동 감지 사용 (비활성화시 고정 영역 사용)")]
     [SerializeField] private bool useAutoMarkerDetection = true;
 
-    [Tooltip("자동 감지 실패 시 고정 크롭 영역 (normalized 0~1)")]
+    [Tooltip("고정 크롭 시작점 (normalized 0~1)")]
     [SerializeField] private Vector2 cropMin = new Vector2(0.05f, 0.1f);
+
+    [Tooltip("고정 크롭 끝점 (normalized 0~1)")]
     [SerializeField] private Vector2 cropMax = new Vector2(0.75f, 0.9f);
 
-    [Header("컬러 추출 설정")]
-    [Tooltip("테두리/윤곽선 제거하고 컬러만 추출")]
+    [Header("=== 컬러 추출 설정 ===")]
+    [Tooltip("테두리/윤곽선 제거 + 컬러만 추출")]
     [SerializeField] private bool extractColorOnly = true;
 
-    [Tooltip("테두리 밖으로 벗어난 색칠 무시 (Flood Fill 마스킹)")]
-    [SerializeField] private bool removeOutsideColors = true;
+    [Header("=== 빈 영역 채우기 설정 ===")]
+    [Tooltip("빈 영역 채우기 모드\n0 = 회색 채우기\n1 = 윤곽선 모드 (흰색 테두리)\n2 = 주요 색상으로 채우기")]
+    [Range(0, 2)]
+    [SerializeField] private int fillMode = 0;
 
-    [Header("디버그")]
+    [Tooltip("빈 영역 채우기 색상 (회색 권장)")]
+    [SerializeField] private Color fillColor = new Color(0.5f, 0.5f, 0.5f, 1f);
+
+    [Tooltip("윤곽선 색상 (모드 1에서 사용)")]
+    [SerializeField] private Color outlineColor = Color.white;
+
+    [Tooltip("윤곽선 두께 (모드 1에서 사용)")]
+    [Range(0.001f, 0.05f)]
+    [SerializeField] private float outlineThickness = 0.01f;
+
+    [Header("=== 디버그 ===")]
     [SerializeField] private bool showDebugLogs = true;
-    [Tooltip("처리된 텍스처를 파일로 저장 (디버그용)")]
-    [SerializeField] private bool saveDebugTexture = true;
 
     private void OnEnable()
     {
@@ -64,62 +93,45 @@ public class ScanProcessor : MonoBehaviour
 
         Log($"스캔 이미지 수신: {filePath} ({scanTexture.width}x{scanTexture.height})");
 
-        // 1. QR 코드 위치 감지 + 이미지 방향 자동 보정
+        // 1. QR 코드 인식 + 이미지 방향 보정
         var (qrText, qrPosition, correctedImage) = ImageOrientationCorrector.DetectAndCorrect(scanTexture);
 
         if (string.IsNullOrEmpty(qrText) || correctedImage == null)
         {
-            Log("QR 인식 실패 - 모델 스폰 안함");
+            Log("QR 인식 실패 - 스캔 무시");
             return;
         }
 
-        Log($"QR 인식: {qrText} (위치: {qrPosition})");
+        Log($"QR 인식 성공: {qrText} (위치: {qrPosition})");
 
-        // 2. 모델 스폰
+        // 2. 해당 동물 모델 스폰
         modelManager?.SpawnModelByQR(qrText);
 
-        // 3. 스케치 영역 크롭 (보정된 이미지에서 마커 기준)
+        // 3. 스케치 영역 크롭
         Texture2D cropped = CropSketchArea(correctedImage);
         if (cropped == null)
         {
-            Log("크롭 실패, 보정된 이미지 사용");
+            Log("크롭 실패 → 보정 이미지 그대로 사용");
             cropped = correctedImage;
         }
         else
         {
-            // 크롭 성공하면 보정 이미지는 삭제
             Object.Destroy(correctedImage);
         }
 
-        // 4. 컬러만 추출 (테두리/윤곽선 제거 + 테두리 밖 색칠 무시)
-        Texture2D colorOnly = cropped;
+        // 4. 컬러 추출 (테두리 제거)
+        Texture2D finalTexture = cropped;
         if (extractColorOnly)
         {
-            if (removeOutsideColors)
-            {
-                // 테두리 밖 색칠도 제거하는 새 메서드 사용
-                colorOnly = ColorExtractor.ExtractColorsWithBorderMask(cropped, true);
-                Log("컬러 추출 완료 (테두리/윤곽선 제거 + 테두리 밖 색칠 무시)");
-            }
-            else
-            {
-                // 기존 방식 (테두리만 제거)
-                colorOnly = ColorExtractor.ExtractColorsOnly(cropped);
-                Log("컬러 추출 완료 (테두리/윤곽선 제거됨)");
-            }
+            finalTexture = ColorExtractor.ExtractColorsWithBorderMask(cropped, true);
+            Log("컬러 추출 완료");
 
-            if (colorOnly != cropped)
+            if (finalTexture != cropped)
                 Object.Destroy(cropped);
         }
 
-        // 5. 디버그: 텍스처 저장
-        if (saveDebugTexture)
-        {
-            SaveDebugTexture(colorOnly, "processed_texture.png");
-        }
-
-        // 6. 새로 스폰된 모델에 텍스처 적용 (텍스처는 모델이 소유)
-        ApplyToCurrentModel(colorOnly);
+        // 5. 모델에 텍스처 적용
+        ApplyTextureToModel(finalTexture);
     }
 
     /// <summary>
@@ -157,9 +169,6 @@ public class ScanProcessor : MonoBehaviour
         return new Rect(cropMin.x, cropMin.y, cropMax.x - cropMin.x, cropMax.y - cropMin.y);
     }
 
-    /// <summary>
-    /// 텍스처 크롭
-    /// </summary>
     private Texture2D CropTexture(Texture2D source, Rect normalizedBounds)
     {
         int x = Mathf.Clamp(Mathf.RoundToInt(normalizedBounds.x * source.width), 0, source.width - 1);
@@ -177,9 +186,9 @@ public class ScanProcessor : MonoBehaviour
     }
 
     /// <summary>
-    /// 현재(방금 스폰된) 모델에 텍스처 적용
+    /// 현재 모델에 텍스처 적용
     /// </summary>
-    private void ApplyToCurrentModel(Texture2D texture)
+    private void ApplyTextureToModel(Texture2D texture)
     {
         Renderer renderer = modelManager?.GetCurrentRenderer();
 
@@ -190,120 +199,115 @@ public class ScanProcessor : MonoBehaviour
             return;
         }
 
-        // ★ 텍스처 그대로 GPU에 업로드 (좌우반전 제거)
+        // GPU 텍스처 준비
         Texture2D gpuTexture = new Texture2D(texture.width, texture.height, TextureFormat.RGBA32, false, false);
         gpuTexture.SetPixels32(texture.GetPixels32());
         gpuTexture.Apply(true, false);
         gpuTexture.filterMode = FilterMode.Bilinear;
         gpuTexture.wrapMode = TextureWrapMode.Clamp;
 
-        // 원본 텍스처 삭제
         Object.Destroy(texture);
 
-        // 커스텀 Triplanar 쉐이더 사용
-        Shader shader = triplanarShader != null ? triplanarShader : Shader.Find("LiveSketch/SimpleTriplanar");
+        // 쉐이더 확인
+        Shader shader = sideMirrorShader != null ? sideMirrorShader : Shader.Find("LiveSketch/SideMirrorBlend");
         if (shader == null)
         {
-            Log("ERROR: SimpleTriplanar 쉐이더를 찾을 수 없음!");
+            Log("ERROR: SideMirrorBlend 쉐이더를 찾을 수 없음!");
             Object.Destroy(gpuTexture);
             return;
         }
 
-        // ★ 새 머티리얼 생성
+        // 머티리얼 생성 및 설정
         Material mat = new Material(shader);
-
-        // ★ sharedMesh.bounds 사용 (스케일 적용 전 원본 메시 바운드)
-        // 쉐이더의 v.vertex.xyz는 스케일 적용 전 로컬 좌표이므로 이와 일치해야 함
-        Bounds meshBounds;
-
-        if (renderer is SkinnedMeshRenderer skinnedRenderer && skinnedRenderer.sharedMesh != null)
-        {
-            meshBounds = skinnedRenderer.sharedMesh.bounds;
-            Log($"  - SkinnedMesh 바운드: min{meshBounds.min}, max{meshBounds.max}");
-        }
-        else if (renderer is MeshRenderer meshRenderer)
-        {
-            var meshFilter = renderer.GetComponent<MeshFilter>();
-            if (meshFilter != null && meshFilter.sharedMesh != null)
-            {
-                meshBounds = meshFilter.sharedMesh.bounds;
-                Log($"  - Mesh 바운드: min{meshBounds.min}, max{meshBounds.max}");
-            }
-            else
-            {
-                // 폴백: 월드 바운드를 로컬로 변환
-                meshBounds = renderer.bounds;
-                Log($"  - 폴백 바운드: min{meshBounds.min}, max{meshBounds.max}");
-            }
-        }
-        else
-        {
-            meshBounds = renderer.bounds;
-            Log($"  - 기본 바운드: min{meshBounds.min}, max{meshBounds.max}");
-        }
-
-        // ★ 머티리얼 속성 설정 (텍스처는 mainTexture로도 설정)
         mat.mainTexture = gpuTexture;
         mat.SetTexture("_MainTex", gpuTexture);
         mat.SetFloat("_HasTexture", 1f);
-        mat.SetFloat("_MinZ", meshBounds.min.z);
-        mat.SetFloat("_MaxZ", meshBounds.max.z);
-        mat.SetFloat("_MinY", meshBounds.min.y);
-        mat.SetFloat("_MaxY", meshBounds.max.y);
-        mat.SetColor("_BaseColor", new Color(0.8f, 0.8f, 0.8f, 1f));
+        mat.SetColor("_BaseColor", new Color(0.85f, 0.85f, 0.85f, 1f));
 
-        // ★ 머티리얼 적용
+        // UV 설정 적용 (AnimalEntry 설정 우선, 없으면 기본값)
+        var entry = modelManager?.GetCurrentEntry();
+        if (entry != null)
+        {
+            mat.SetFloat("_OffsetX", entry.uvOffsetX);
+            mat.SetFloat("_OffsetY", entry.uvOffsetY);
+            mat.SetFloat("_ScaleX", entry.uvScaleX);
+            mat.SetFloat("_ScaleY", entry.uvScaleY);
+            Log($"AnimalEntry UV 설정 적용: {entry.qrText}");
+        }
+        else
+        {
+            mat.SetFloat("_OffsetX", uvOffsetX);
+            mat.SetFloat("_OffsetY", uvOffsetY);
+            mat.SetFloat("_ScaleX", uvScaleX);
+            mat.SetFloat("_ScaleY", uvScaleY);
+        }
+
+        // 텍스처에서 주요 색상 자동 추출
+        Color dominantColor = ExtractDominantColor(gpuTexture);
+        mat.SetColor("_OutOfBoundsColor", dominantColor);
+        mat.SetColor("_BaseColor", dominantColor);
+        Log($"자동 추출 색상: R={dominantColor.r:F2} G={dominantColor.g:F2} B={dominantColor.b:F2}");
+
+        // 빈 영역 채우기 설정
+        mat.SetFloat("_FillMode", fillMode);
+        mat.SetColor("_FillColor", fillColor);
+        mat.SetColor("_OutlineColor", outlineColor);
+        mat.SetFloat("_OutlineThickness", outlineThickness);
+        mat.SetFloat("_AlphaThreshold", 0.1f);
+        Log($"빈 영역 채우기 모드: {fillMode} ({(fillMode == 0 ? "회색" : fillMode == 1 ? "윤곽선" : "주요색상")})");
+
+        // 머티리얼 적용
         renderer.material = mat;
 
-        Log($"새 머티리얼 생성 및 적용: {renderer.name}");
-        Log($"  - 바운드 (YZ): Z({meshBounds.min.z:F4}~{meshBounds.max.z:F4}), Y({meshBounds.min.y:F4}~{meshBounds.max.y:F4})");
-        Log($"  - 텍스처: {gpuTexture.width}x{gpuTexture.height}");
-        Log($"  - GPU 텍스처 ID: {gpuTexture.GetNativeTexturePtr()}");
-
-        // 텍스처 적용 확인
-        var appliedTex = mat.GetTexture("_MainTex") as Texture2D;
-        Log($"  - _MainTex 확인: {(appliedTex != null ? $"{appliedTex.width}x{appliedTex.height}" : "NULL!")}");
-        Log($"  - mainTexture 확인: {(mat.mainTexture != null ? $"{mat.mainTexture.width}x{mat.mainTexture.height}" : "NULL!")}");
-        Log($"  - _HasTexture: {mat.GetFloat("_HasTexture")}");
-        Log($"  - Shader: {mat.shader.name}");
+        Log($"텍스처 적용 완료: {renderer.name} ({gpuTexture.width}x{gpuTexture.height})");
     }
 
-    private static readonly string DebugFolder = "C:/ProgramData/LiveSketch/Debug";
-    private static readonly string LogFile = "C:/ProgramData/LiveSketch/Debug/scan_log.txt";
+    /// <summary>
+    /// 텍스처에서 주요 색상 추출 (흰색/투명 제외)
+    /// </summary>
+    private Color ExtractDominantColor(Texture2D texture)
+    {
+        var pixels = texture.GetPixels32();
+        float totalR = 0, totalG = 0, totalB = 0;
+        int count = 0;
+
+        // 샘플링 (전체 픽셀 중 일부만)
+        int step = Mathf.Max(1, pixels.Length / 5000);
+
+        for (int i = 0; i < pixels.Length; i += step)
+        {
+            var p = pixels[i];
+
+            // 투명 픽셀 제외
+            if (p.a < 128) continue;
+
+            // 흰색/밝은 색 제외 (배경)
+            float brightness = (p.r + p.g + p.b) / 3f / 255f;
+            if (brightness > 0.85f) continue;
+
+            // 너무 어두운 색도 제외 (윤곽선)
+            if (brightness < 0.1f) continue;
+
+            totalR += p.r;
+            totalG += p.g;
+            totalB += p.b;
+            count++;
+        }
+
+        if (count == 0)
+            return new Color(0.2f, 0.2f, 0.2f, 1f); // 기본값
+
+        return new Color(
+            totalR / count / 255f,
+            totalG / count / 255f,
+            totalB / count / 255f,
+            1f
+        );
+    }
 
     private void Log(string message)
     {
-        string logMessage = $"[{System.DateTime.Now:HH:mm:ss}] {message}";
         if (showDebugLogs)
             Debug.Log($"[ScanProcessor] {message}");
-
-        // 파일로도 저장
-        AppendToLogFile(logMessage);
-    }
-
-    private void AppendToLogFile(string message)
-    {
-        try
-        {
-            System.IO.Directory.CreateDirectory(DebugFolder);
-            System.IO.File.AppendAllText(LogFile, message + "\n");
-        }
-        catch { }
-    }
-
-    private void SaveDebugTexture(Texture2D texture, string filename)
-    {
-        try
-        {
-            System.IO.Directory.CreateDirectory(DebugFolder);
-            byte[] bytes = texture.EncodeToPNG();
-            string path = System.IO.Path.Combine(DebugFolder, filename);
-            System.IO.File.WriteAllBytes(path, bytes);
-            Log($"디버그 텍스처 저장: {path} ({texture.width}x{texture.height})");
-        }
-        catch (System.Exception e)
-        {
-            Debug.LogWarning($"[ScanProcessor] 텍스처 저장 실패: {e.Message}");
-        }
     }
 }

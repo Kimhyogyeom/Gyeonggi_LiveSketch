@@ -7,6 +7,8 @@ using UnityEngine;
 /// <summary>
 /// 지정 폴더에서 스캔된 JPG 파일을 감시하고
 /// 새 파일이 감지되면 텍스처로 로드하여 이벤트로 전달합니다.
+///
+/// 비정상 이미지(잘린 이미지 등)가 감지되면 정상 이미지를 기다립니다.
 /// </summary>
 public class ScanFolderWatcher : MonoBehaviour
 {
@@ -20,6 +22,22 @@ public class ScanFolderWatcher : MonoBehaviour
 
     [Tooltip("재시도 간격 (ms)")]
     [SerializeField] private int readRetryDelayMs = 100;
+
+    [Header("이미지 필터링")]
+    [Tooltip("최소 이미지 너비 (픽셀) - 이보다 작으면 대기")]
+    [SerializeField] private int minImageWidth = 800;
+
+    [Tooltip("최소 이미지 높이 (픽셀) - 이보다 작으면 대기")]
+    [SerializeField] private int minImageHeight = 600;
+
+    [Tooltip("최소 가로세로 비율 (width/height) - A4 가로는 약 1.4")]
+    [SerializeField] private float minAspectRatio = 1.0f;
+
+    [Tooltip("최대 가로세로 비율 - 너무 길쭉하면 대기")]
+    [SerializeField] private float maxAspectRatio = 2.0f;
+
+    [Tooltip("비정상 이미지 후 정상 이미지 대기 시간 (초)")]
+    [SerializeField] private float waitForValidImageTimeout = 10.0f;
 
     [Header("디버그 (선택)")]
     [SerializeField] private Renderer previewRenderer;
@@ -35,6 +53,11 @@ public class ScanFolderWatcher : MonoBehaviour
     private FileSystemWatcher _watcher;
     private readonly ConcurrentQueue<string> _pendingFiles = new();
     private Texture2D _lastTexture;
+
+    // 대기 상태 관리
+    private bool _waitingForValidImage = false;
+    private float _waitStartTime = 0f;
+    private string _invalidImagePath = null;
 
     private void Awake()
     {
@@ -99,13 +122,25 @@ public class ScanFolderWatcher : MonoBehaviour
 
     private void Update()
     {
-        // 여러 이벤트 중 마지막(최신)만 처리
+        // 대기 타임아웃 체크
+        if (_waitingForValidImage)
+        {
+            if (Time.time - _waitStartTime > waitForValidImageTimeout)
+            {
+                Debug.LogWarning($"[ScanFolderWatcher] 정상 이미지 대기 타임아웃 ({waitForValidImageTimeout}초) - 스캔 실패");
+                _waitingForValidImage = false;
+                _invalidImagePath = null;
+            }
+        }
+
+        // 큐에서 파일 경로 가져오기
         string lastPath = null;
         while (_pendingFiles.TryDequeue(out var path))
             lastPath = path;
 
         if (string.IsNullOrEmpty(lastPath)) return;
 
+        // 파일 읽기
         var bytes = TryReadFile(lastPath);
         if (bytes == null) return;
 
@@ -114,6 +149,32 @@ public class ScanFolderWatcher : MonoBehaviour
         {
             Destroy(tex);
             return;
+        }
+
+        // 이미지 유효성 검사
+        var validationResult = ValidateScanImage(tex, lastPath);
+
+        if (!validationResult.isValid)
+        {
+            Destroy(tex);
+
+            // 비정상 이미지 → 정상 이미지 대기 시작
+            if (!_waitingForValidImage)
+            {
+                _waitingForValidImage = true;
+                _waitStartTime = Time.time;
+                _invalidImagePath = lastPath;
+                Debug.Log($"[ScanFolderWatcher] 비정상 이미지 감지 - 정상 이미지 대기 중... ({validationResult.reason})");
+            }
+            return;
+        }
+
+        // 정상 이미지 도착!
+        if (_waitingForValidImage)
+        {
+            Debug.Log($"[ScanFolderWatcher] 정상 이미지 수신 완료! (대기 시간: {Time.time - _waitStartTime:F2}초)");
+            _waitingForValidImage = false;
+            _invalidImagePath = null;
         }
 
         tex.wrapMode = TextureWrapMode.Clamp;
@@ -129,6 +190,32 @@ public class ScanFolderWatcher : MonoBehaviour
         // 미리보기
         if (previewRenderer != null)
             previewRenderer.material.mainTexture = tex;
+    }
+
+    /// <summary>
+    /// 스캔 이미지 유효성 검사
+    /// </summary>
+    private (bool isValid, string reason) ValidateScanImage(Texture2D tex, string path)
+    {
+        int width = tex.width;
+        int height = tex.height;
+        float aspectRatio = (float)width / height;
+        string fileName = Path.GetFileName(path);
+
+        // 크기 검사
+        if (width < minImageWidth || height < minImageHeight)
+        {
+            return (false, $"크기 부족: {width}x{height}");
+        }
+
+        // 비율 검사 (너무 길쭉하면 잘린 이미지)
+        if (aspectRatio < minAspectRatio || aspectRatio > maxAspectRatio)
+        {
+            return (false, $"비정상 비율: {aspectRatio:F2}");
+        }
+
+        Debug.Log($"[ScanFolderWatcher] 이미지 검증 통과: {width}x{height}, 비율: {aspectRatio:F2} - {fileName}");
+        return (true, null);
     }
 
     private bool IsJpeg(string path)
