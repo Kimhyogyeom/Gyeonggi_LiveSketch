@@ -32,3 +32,7 @@ Assets/TerrainDemoScene_URP/
 
 # Claude 임시 파일
 tmpclaude-*
+
+# Windows 예약 파일명
+nul
+SessionLog.txt

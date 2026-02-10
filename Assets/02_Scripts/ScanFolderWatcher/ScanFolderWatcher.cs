@@ -18,10 +18,10 @@ public class ScanFolderWatcher : MonoBehaviour
 
     [Header("파일 읽기 설정")]
     [Tooltip("파일 읽기 재시도 횟수")]
-    [SerializeField] private int readRetryCount = 60;
+    [SerializeField] private int readRetryCount = 10;
 
     [Tooltip("재시도 간격 (ms)")]
-    [SerializeField] private int readRetryDelayMs = 100;
+    [SerializeField] private int readRetryDelayMs = 50;
 
     [Header("이미지 필터링")]
     [Tooltip("최소 이미지 너비 (픽셀) - 이보다 작으면 대기")]
@@ -30,14 +30,21 @@ public class ScanFolderWatcher : MonoBehaviour
     [Tooltip("최소 이미지 높이 (픽셀) - 이보다 작으면 대기")]
     [SerializeField] private int minImageHeight = 600;
 
-    [Tooltip("최소 가로세로 비율 (width/height) - A4 가로는 약 1.4")]
-    [SerializeField] private float minAspectRatio = 1.0f;
+    [Tooltip("최소 가로세로 비율 (width/height) - 세로 활동지는 약 0.7~0.8")]
+    [SerializeField] private float minAspectRatio = 0.6f;
 
     [Tooltip("최대 가로세로 비율 - 너무 길쭉하면 대기")]
     [SerializeField] private float maxAspectRatio = 2.0f;
 
     [Tooltip("비정상 이미지 후 정상 이미지 대기 시간 (초)")]
     [SerializeField] private float waitForValidImageTimeout = 10.0f;
+
+    [Header("오디오")]
+    [Tooltip("비정상 이미지 감지 시 재생할 오디오 클립")]
+    [SerializeField] private AudioClip invalidImageClip;
+
+    [Tooltip("오디오 재생용 AudioSource (비워두면 자동 생성)")]
+    [SerializeField] private AudioSource audioSource;
 
     [Header("디버그 (선택)")]
     [SerializeField] private Renderer previewRenderer;
@@ -165,6 +172,14 @@ public class ScanFolderWatcher : MonoBehaviour
                 _waitStartTime = Time.time;
                 _invalidImagePath = lastPath;
                 Debug.Log($"[ScanFolderWatcher] 비정상 이미지 감지 - 정상 이미지 대기 중... ({validationResult.reason})");
+
+                // 비정상 이미지 오디오 재생
+                if (invalidImageClip != null)
+                {
+                    if (audioSource == null)
+                        audioSource = gameObject.AddComponent<AudioSource>();
+                    audioSource.PlayOneShot(invalidImageClip);
+                }
             }
             return;
         }

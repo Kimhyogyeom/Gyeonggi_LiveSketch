@@ -19,7 +19,13 @@
       "Bash(git cat-file:*)",
       "Bash(sort:*)",
       "Bash(git rm:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(dir \"C:\\\\ProgramData\\\\LiveSketch\\\\Scans\" /O-D /B)",
+      "Bash(dir:*)",
+      "Bash(python:*)",
+      "Bash(del:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(findstr:*)"
     ]
   }
 }

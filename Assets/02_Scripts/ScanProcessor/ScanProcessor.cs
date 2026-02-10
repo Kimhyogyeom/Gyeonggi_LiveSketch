@@ -1,313 +1,452 @@
+using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
-/// 스캔 파이프라인 메인 컨트롤러
-///
-/// [파이프라인 흐름]
-/// 1. 스캔 이미지 수신 (ScanFolderWatcher)
-/// 2. QR 코드 인식 → 이미지 방향 보정 (ImageOrientationCorrector)
-/// 3. QR 텍스트로 해당 동물 모델 스폰 (AnimalModelManager)
-/// 4. 마커 기준 스케치 영역 크롭 (CornerMarkerDetector)
-/// 5. 테두리 제거 + 컬러 추출 (ColorExtractor)
-/// 6. 3D 모델에 텍스처 적용 (SideMirrorBlend 쉐이더)
+/// 캐릭터별 색상 합성 설정
+/// </summary>
+[Serializable]
+public class CharacterColorSettings
+{
+    [Tooltip("QR 코드 텍스트 (캐릭터 이름)")]
+    public string characterName;
+
+    [Header("=== 색상 필터링 ===")]
+    [Tooltip("최소 채도 (0.15~0.3)")]
+    [Range(0.05f, 0.5f)]
+    public float minSaturation = 0.2f;
+
+    [Tooltip("외곽선 밝기 임계값 (베이스 이미지)")]
+    [Range(0.2f, 0.7f)]
+    public float outlineThreshold = 0.5f;
+
+    [Tooltip("스캔 색상 최소 밝기 (어두운 색 필터링)")]
+    [Range(0.1f, 0.8f)]
+    public float minBrightness = 0.3f;
+
+    [Header("=== 위치 조정 ===")]
+    public bool flipY = true;
+
+    [Tooltip("X 이동 (픽셀 비율)")]
+    [Range(-1f, 1f)]
+    public float offsetX = 0f;
+
+    [Tooltip("Y 이동 (픽셀 비율)")]
+    [Range(-1f, 1f)]
+    public float offsetY = 0f;
+
+    [Tooltip("X축 스케일")]
+    [Range(0.5f, 2f)]
+    public float scaleX = 1f;
+
+    [Tooltip("Y축 스케일")]
+    [Range(0.5f, 2f)]
+    public float scaleY = 1f;
+
+    [Header("=== 머리 분리 애니메이션 ===")]
+    [Tooltip("머리 분리 활성화")]
+    public bool enableHeadSplit = false;
+
+    [Tooltip("머리/몸통 경계선 (아래에서 몇 % 위치)")]
+    [Range(0.3f, 0.9f)]
+    public float headSplitY = 0.7f;
+
+    [Tooltip("머리 피벗 Y 오프셋 (회전 중심점 조정)")]
+    [Range(-0.5f, 0.5f)]
+    public float headPivotOffsetY = 0f;
+}
+
+/// <summary>
+/// 스캔 → 색상 입히기 파이프라인
 /// </summary>
 public class ScanProcessor : MonoBehaviour
 {
     [Header("=== 필수 연결 ===")]
-    [Tooltip("스캔 폴더 감시 컴포넌트")]
     [SerializeField] private ScanFolderWatcher watcher;
-
-    [Tooltip("동물 모델 관리 컴포넌트")]
     [SerializeField] private AnimalModelManager modelManager;
 
-    [Tooltip("텍스처 매핑 쉐이더")]
-    [SerializeField] private Shader sideMirrorShader;
-
-    [Header("=== UV 매핑 설정 ===")]
-    [Tooltip("텍스처 좌우 위치 조정")]
-    [Range(-1f, 1f)]
-    [SerializeField] private float uvOffsetX = 0.06f;
-
-    [Tooltip("텍스처 상하 위치 조정")]
-    [Range(-1f, 1f)]
-    [SerializeField] private float uvOffsetY = -0.019f;
-
-    [Tooltip("텍스처 좌우 크기 (작을수록 넓게 펼쳐짐)")]
-    [Range(0.1f, 2f)]
-    [SerializeField] private float uvScaleX = 0.52f;
-
-    [Tooltip("텍스처 상하 크기")]
-    [Range(0.1f, 2f)]
-    [SerializeField] private float uvScaleY = 1.02f;
-
-    [Header("=== 이미지 크롭 설정 ===")]
-    [Tooltip("코너 마커 자동 감지 사용 (비활성화시 고정 영역 사용)")]
+    [Header("=== 마커 감지 ===")]
     [SerializeField] private bool useAutoMarkerDetection = true;
+    [SerializeField] private Vector2 cropMin = new Vector2(0.04f, 0.03f);
+    [SerializeField] private Vector2 cropMax = new Vector2(0.96f, 0.75f);
 
-    [Tooltip("고정 크롭 시작점 (normalized 0~1)")]
-    [SerializeField] private Vector2 cropMin = new Vector2(0.05f, 0.1f);
+    [Header("=== 캐릭터별 설정 ===")]
+    [Tooltip("캐릭터별 색상/위치 설정 리스트")]
+    [SerializeField] private List<CharacterColorSettings> characterSettings = new List<CharacterColorSettings>();
 
-    [Tooltip("고정 크롭 끝점 (normalized 0~1)")]
-    [SerializeField] private Vector2 cropMax = new Vector2(0.75f, 0.9f);
+    [Header("=== 기본 설정 (매칭 실패 시) ===")]
+    [SerializeField] private CharacterColorSettings defaultSettings = new CharacterColorSettings();
 
-    [Header("=== 컬러 추출 설정 ===")]
-    [Tooltip("테두리/윤곽선 제거 + 컬러만 추출")]
-    [SerializeField] private bool extractColorOnly = true;
-
-    [Header("=== 빈 영역 채우기 설정 ===")]
-    [Tooltip("빈 영역 채우기 모드\n0 = 회색 채우기\n1 = 윤곽선 모드 (흰색 테두리)\n2 = 주요 색상으로 채우기")]
-    [Range(0, 2)]
-    [SerializeField] private int fillMode = 0;
-
-    [Tooltip("빈 영역 채우기 색상 (회색 권장)")]
-    [SerializeField] private Color fillColor = new Color(0.5f, 0.5f, 0.5f, 1f);
-
-    [Tooltip("윤곽선 색상 (모드 1에서 사용)")]
-    [SerializeField] private Color outlineColor = Color.white;
-
-    [Tooltip("윤곽선 두께 (모드 1에서 사용)")]
-    [Range(0.001f, 0.05f)]
-    [SerializeField] private float outlineThickness = 0.01f;
+    [Header("=== 런타임 조정 ===")]
+    [SerializeField] private bool liveAdjust = true;
 
     [Header("=== 디버그 ===")]
-    [SerializeField] private bool showDebugLogs = true;
+    [SerializeField] private bool showLogs = true;
 
-    private void OnEnable()
+    // 캐시
+    private Texture2D _scanTex, _baseTex;
+    private SpriteRenderer _sr;
+    private string _currentCharacter;
+    private CharacterColorSettings _currentSettings;
+
+    // 머리 분리용
+    private GameObject _headObject;
+    private SpriteRenderer _headSr;
+    private SpriteRenderer _bodySr;
+
+    // 변경 감지용
+    private float _pOffX, _pOffY, _pScaleX, _pScaleY, _pMinSat, _pOutline, _pMinBright;
+    private bool _pFlipY, _pHeadSplit;
+    private float _pHeadSplitY;
+
+    void OnEnable() { if (watcher) watcher.OnScanTextureReady += OnScan; }
+    void OnDisable() { if (watcher) watcher.OnScanTextureReady -= OnScan; }
+
+    void Update()
     {
-        if (watcher != null)
-            watcher.OnScanTextureReady += HandleScan;
+        if (!liveAdjust || _scanTex == null || _baseTex == null || _sr == null || _currentSettings == null) return;
+
+        // 현재 설정값 변경 감지
+        if (HasSettingsChanged())
+        {
+            CacheCurrentSettings();
+            ApplyColors();
+        }
     }
 
-    private void OnDisable()
+    bool HasSettingsChanged()
     {
-        if (watcher != null)
-            watcher.OnScanTextureReady -= HandleScan;
+        return _pOffX != _currentSettings.offsetX ||
+               _pOffY != _currentSettings.offsetY ||
+               _pScaleX != _currentSettings.scaleX ||
+               _pScaleY != _currentSettings.scaleY ||
+               _pMinSat != _currentSettings.minSaturation ||
+               _pOutline != _currentSettings.outlineThreshold ||
+               _pMinBright != _currentSettings.minBrightness ||
+               _pFlipY != _currentSettings.flipY ||
+               _pHeadSplit != _currentSettings.enableHeadSplit ||
+               _pHeadSplitY != _currentSettings.headSplitY;
+    }
+
+    void CacheCurrentSettings()
+    {
+        if (_currentSettings == null) return;
+        _pOffX = _currentSettings.offsetX;
+        _pOffY = _currentSettings.offsetY;
+        _pScaleX = _currentSettings.scaleX;
+        _pScaleY = _currentSettings.scaleY;
+        _pMinSat = _currentSettings.minSaturation;
+        _pOutline = _currentSettings.outlineThreshold;
+        _pMinBright = _currentSettings.minBrightness;
+        _pFlipY = _currentSettings.flipY;
+        _pHeadSplit = _currentSettings.enableHeadSplit;
+        _pHeadSplitY = _currentSettings.headSplitY;
     }
 
     /// <summary>
-    /// 스캔 이미지 처리 메인 파이프라인
+    /// QR 코드로 캐릭터 설정 찾기
     /// </summary>
-    private void HandleScan(Texture2D scanTexture, string filePath)
+    CharacterColorSettings FindSettings(string qrText)
     {
-        if (scanTexture == null) return;
-
-        Log($"스캔 이미지 수신: {filePath} ({scanTexture.width}x{scanTexture.height})");
-
-        // 1. QR 코드 인식 + 이미지 방향 보정
-        var (qrText, qrPosition, correctedImage) = ImageOrientationCorrector.DetectAndCorrect(scanTexture);
-
-        if (string.IsNullOrEmpty(qrText) || correctedImage == null)
+        foreach (var setting in characterSettings)
         {
-            Log("QR 인식 실패 - 스캔 무시");
-            return;
+            if (setting.characterName == qrText)
+            {
+                Log($"캐릭터 설정 찾음: {qrText}");
+                return setting;
+            }
         }
+        Log($"캐릭터 설정 없음: {qrText} → 기본값 사용");
+        return defaultSettings;
+    }
 
-        Log($"QR 인식 성공: {qrText} (위치: {qrPosition})");
+    void OnScan(Texture2D tex, string path)
+    {
+        if (tex == null) return;
+        Log($"스캔: {tex.width}x{tex.height}");
 
-        // 2. 해당 동물 모델 스폰
-        modelManager?.SpawnModelByQR(qrText);
+        // QR + 방향 보정
+        var (qr, pos, corrected) = ImageOrientationCorrector.DetectAndCorrect(tex);
+        if (string.IsNullOrEmpty(qr) || corrected == null) { Log("QR 실패"); return; }
+        Log($"QR: {qr}, 방향: {pos}");
 
-        // 3. 스케치 영역 크롭
-        Texture2D cropped = CropSketchArea(correctedImage);
-        if (cropped == null)
+        // 캐릭터 설정 찾기
+        _currentCharacter = qr;
+        _currentSettings = FindSettings(qr);
+
+        // 캐릭터 스폰
+        modelManager?.SpawnSpriteByQR(qr);
+
+        // 크롭
+        Texture2D cropped = Crop(corrected);
+        Destroy(corrected);
+        if (cropped == null) { Log("크롭 실패"); return; }
+
+        // 캐시 저장
+        _scanTex = cropped;
+        _sr = modelManager?.GetCurrentSpriteRenderer();
+        if (_sr == null || _sr.sprite == null) { Log("스프라이트 없음"); return; }
+        _baseTex = _sr.sprite.texture;
+        if (_baseTex == null || !_baseTex.isReadable) { Log("텍스처 읽기 불가"); return; }
+
+        CacheCurrentSettings();
+        ApplyColors();
+    }
+
+    void ApplyColors()
+    {
+        if (_currentSettings == null) return;
+
+        Texture2D result = Blend(_baseTex, _scanTex, _currentSettings);
+        if (result == null) return;
+
+        // 머리 분리 활성화 시
+        if (_currentSettings.enableHeadSplit)
         {
-            Log("크롭 실패 → 보정 이미지 그대로 사용");
-            cropped = correctedImage;
+            ApplyWithHeadSplit(result);
         }
         else
         {
-            Object.Destroy(correctedImage);
+            // 기존 방식: 단일 스프라이트
+            CleanupHeadObject();
+            Sprite spr = Sprite.Create(result, new Rect(0, 0, result.width, result.height), new Vector2(0.5f, 0.5f), 100f);
+            _sr.sprite = spr;
         }
 
-        // 4. 컬러 추출 (테두리 제거)
-        Texture2D finalTexture = cropped;
-        if (extractColorOnly)
-        {
-            finalTexture = ColorExtractor.ExtractColorsWithBorderMask(cropped, true);
-            Log("컬러 추출 완료");
-
-            if (finalTexture != cropped)
-                Object.Destroy(cropped);
-        }
-
-        // 5. 모델에 텍스처 적용
-        ApplyTextureToModel(finalTexture);
+        Log("적용 완료");
     }
 
     /// <summary>
-    /// 마커 기반 스케치 영역 크롭
+    /// 머리/몸통 분리 적용
     /// </summary>
-    private Texture2D CropSketchArea(Texture2D tex)
+    void ApplyWithHeadSplit(Texture2D coloredTex)
     {
-        Rect cropBounds;
+        int w = coloredTex.width;
+        int h = coloredTex.height;
+        int splitY = Mathf.RoundToInt(h * _currentSettings.headSplitY);
+
+        // 몸통 (아래 부분)
+        int bodyH = splitY;
+        if (bodyH > 0)
+        {
+            var bodyPixels = coloredTex.GetPixels(0, 0, w, bodyH);
+            var bodyTex = new Texture2D(w, bodyH, TextureFormat.RGBA32, false);
+            bodyTex.SetPixels(bodyPixels);
+            bodyTex.Apply();
+            bodyTex.filterMode = FilterMode.Bilinear;
+
+            // 몸통 피벗: 하단 중앙 기준, 상단이 분리 지점
+            float bodyPivotY = 0f; // 하단
+            Sprite bodySpr = Sprite.Create(bodyTex, new Rect(0, 0, w, bodyH), new Vector2(0.5f, bodyPivotY), 100f);
+            _sr.sprite = bodySpr;
+        }
+
+        // 머리 (위 부분)
+        int headH = h - splitY;
+        if (headH > 0)
+        {
+            var headPixels = coloredTex.GetPixels(0, splitY, w, headH);
+            var headTex = new Texture2D(w, headH, TextureFormat.RGBA32, false);
+            headTex.SetPixels(headPixels);
+            headTex.Apply();
+            headTex.filterMode = FilterMode.Bilinear;
+
+            // 머리 오브젝트 생성/업데이트
+            SetupHeadObject(headTex, w, headH, splitY, h);
+        }
+    }
+
+    /// <summary>
+    /// 머리 오브젝트 설정
+    /// </summary>
+    void SetupHeadObject(Texture2D headTex, int w, int headH, int splitY, int totalH)
+    {
+        GameObject parent = _sr.gameObject;
+
+        // 기존 머리 오브젝트가 없으면 생성
+        if (_headObject == null)
+        {
+            _headObject = new GameObject("Head");
+            _headObject.transform.SetParent(parent.transform);
+            _headObject.transform.localScale = Vector3.one;
+
+            _headSr = _headObject.AddComponent<SpriteRenderer>();
+            _headSr.sortingOrder = _sr.sortingOrder + 1; // 몸통 위에 렌더링
+
+            // HeadAnimator 추가
+            var animator = _headObject.AddComponent<HeadAnimator>();
+            Log("머리 오브젝트 생성 + HeadAnimator 추가");
+        }
+
+        // 머리 피벗: 하단 중앙 (회전 중심점)
+        float headPivotY = _currentSettings.headPivotOffsetY;
+        Sprite headSpr = Sprite.Create(headTex, new Rect(0, 0, w, headH), new Vector2(0.5f, headPivotY), 100f);
+        _headSr.sprite = headSpr;
+
+        // 머리 위치: 몸통 위에 배치
+        // 몸통 피벗이 하단이므로, 머리는 splitY/100 만큼 위에
+        float headLocalY = (float)splitY / 100f;
+        _headObject.transform.localPosition = new Vector3(0, headLocalY, 0);
+
+        // HeadAnimator 초기값 재설정
+        var headAnimator = _headObject.GetComponent<HeadAnimator>();
+        if (headAnimator != null)
+        {
+            headAnimator.RecaptureInitialValues();
+        }
+    }
+
+    /// <summary>
+    /// 머리 오브젝트 정리
+    /// </summary>
+    void CleanupHeadObject()
+    {
+        if (_headObject != null)
+        {
+            // 스프라이트/텍스처 정리
+            if (_headSr != null && _headSr.sprite != null)
+            {
+                var tex = _headSr.sprite.texture;
+                Destroy(_headSr.sprite);
+                if (tex != null) Destroy(tex);
+            }
+            Destroy(_headObject);
+            _headObject = null;
+            _headSr = null;
+            Log("머리 오브젝트 정리됨");
+        }
+    }
+
+    Texture2D Crop(Texture2D src)
+    {
+        Rect bounds;
 
         if (useAutoMarkerDetection)
         {
-            var detection = CornerMarkerDetector.DetectMarkers(tex);
+            var det = CornerMarkerDetector.DetectMarkers(src);
 
-            if (detection.success)
+            if (det.success)
             {
-                Log($"마커 감지 성공: {detection.sketchBounds}");
-                cropBounds = detection.sketchBounds;
+                bounds = det.sketchBounds;
+                Log($"마커 감지 성공! 크롭 영역: ({bounds.x:F2}, {bounds.y:F2}) ~ ({bounds.xMax:F2}, {bounds.yMax:F2})");
             }
             else
             {
-                Log("마커 감지 실패 → 고정 영역 사용");
-                cropBounds = GetFixedCropBounds();
+                bounds = new Rect(cropMin.x, cropMin.y, cropMax.x - cropMin.x, cropMax.y - cropMin.y);
+                Log($"마커 감지 실패 → 기본값 사용: ({bounds.x:F2}, {bounds.y:F2}) ~ ({bounds.xMax:F2}, {bounds.yMax:F2})");
             }
         }
         else
         {
-            cropBounds = GetFixedCropBounds();
+            bounds = new Rect(cropMin.x, cropMin.y, cropMax.x - cropMin.x, cropMax.y - cropMin.y);
+            Log("자동 마커 감지 OFF → 수동 크롭");
         }
 
-        return CropTexture(tex, cropBounds);
-    }
+        int x = Mathf.RoundToInt(bounds.x * src.width);
+        int y = Mathf.RoundToInt(bounds.y * src.height);
+        int w = Mathf.RoundToInt(bounds.width * src.width);
+        int h = Mathf.RoundToInt(bounds.height * src.height);
+        x = Mathf.Clamp(x, 0, src.width - 1);
+        y = Mathf.Clamp(y, 0, src.height - 1);
+        w = Mathf.Clamp(w, 1, src.width - x);
+        h = Mathf.Clamp(h, 1, src.height - y);
 
-    private Rect GetFixedCropBounds()
-    {
-        return new Rect(cropMin.x, cropMin.y, cropMax.x - cropMin.x, cropMax.y - cropMin.y);
-    }
+        Log($"크롭 실행: ({x}, {y}) 크기: {w}x{h}");
 
-    private Texture2D CropTexture(Texture2D source, Rect normalizedBounds)
-    {
-        int x = Mathf.Clamp(Mathf.RoundToInt(normalizedBounds.x * source.width), 0, source.width - 1);
-        int y = Mathf.Clamp(Mathf.RoundToInt(normalizedBounds.y * source.height), 0, source.height - 1);
-        int w = Mathf.Clamp(Mathf.RoundToInt(normalizedBounds.width * source.width), 1, source.width - x);
-        int h = Mathf.Clamp(Mathf.RoundToInt(normalizedBounds.height * source.height), 1, source.height - y);
-
-        var pixels = source.GetPixels(x, y, w, h);
-        var cropped = new Texture2D(w, h, TextureFormat.RGBA32, false);
-        cropped.SetPixels(pixels);
-        cropped.Apply(false, false);
-        cropped.wrapMode = TextureWrapMode.Clamp;
-
-        return cropped;
+        var px = src.GetPixels(x, y, w, h);
+        var tex = new Texture2D(w, h, TextureFormat.RGBA32, false);
+        tex.SetPixels(px);
+        tex.Apply();
+        return tex;
     }
 
     /// <summary>
-    /// 현재 모델에 텍스처 적용
+    /// 색상 합성 - 캐릭터별 설정 적용
     /// </summary>
-    private void ApplyTextureToModel(Texture2D texture)
+    Texture2D Blend(Texture2D baseImg, Texture2D scanImg, CharacterColorSettings settings)
     {
-        Renderer renderer = modelManager?.GetCurrentRenderer();
+        int bw = baseImg.width, bh = baseImg.height;
+        int sw = scanImg.width, sh = scanImg.height;
 
-        if (renderer == null)
+        Color[] basePx = baseImg.GetPixels();
+        Color[] result = new Color[basePx.Length];
+
+        // 설정값 로컬 변수로 캐시 (성능)
+        float minSat = settings.minSaturation;
+        float outlineTh = settings.outlineThreshold;
+        float minBright = settings.minBrightness;
+        float offX = settings.offsetX;
+        float offY = settings.offsetY;
+        float sclX = settings.scaleX;
+        float sclY = settings.scaleY;
+        bool flip = settings.flipY;
+
+        // 오프셋 (픽셀 단위)
+        int pixelOffX = Mathf.RoundToInt(offX * bw);
+        int pixelOffY = Mathf.RoundToInt(offY * bh);
+
+        for (int i = 0; i < basePx.Length; i++)
         {
-            Log("텍스처 적용할 모델 없음");
-            Object.Destroy(texture);
-            return;
+            Color baseCol = basePx[i];
+            int bx = i % bw;
+            int by = i / bw;
+
+            // 투명 유지
+            if (baseCol.a < 0.1f) { result[i] = baseCol; continue; }
+
+            // 외곽선 유지
+            Color.RGBToHSV(baseCol, out _, out _, out float v);
+            if (v < outlineTh) { result[i] = baseCol; continue; }
+
+            // 베이스 좌표 → 스캔 좌표 (스케일 + 오프셋 적용)
+            float normX = (float)(bx - bw / 2) / (bw * sclX) + 0.5f - (float)pixelOffX / bw;
+            float normY = (float)(by - bh / 2) / (bh * sclY) + 0.5f - (float)pixelOffY / bh;
+
+            // 상하 반전
+            if (flip) normY = 1f - normY;
+
+            // 범위 체크
+            if (normX < 0 || normX > 1 || normY < 0 || normY > 1)
+            {
+                result[i] = baseCol;
+                continue;
+            }
+
+            // 스캔 좌표 (리사이즈된 것처럼 샘플링)
+            int sx = Mathf.Clamp(Mathf.RoundToInt(normX * (sw - 1)), 0, sw - 1);
+            int sy = Mathf.Clamp(Mathf.RoundToInt(normY * (sh - 1)), 0, sh - 1);
+
+            Color scanCol = scanImg.GetPixel(sx, sy);
+
+            // HSV 변환
+            Color.RGBToHSV(scanCol, out _, out float sat, out float val);
+
+            // 채도 체크 - 무채색(회색/검정/흰색)이면 베이스 유지
+            if (sat < minSat) { result[i] = baseCol; continue; }
+
+            // 밝기 체크 - 어두운 색(검정/진한 색)이면 베이스 유지
+            if (val < minBright) { result[i] = baseCol; continue; }
+
+            // 색상 적용
+            result[i] = new Color(scanCol.r, scanCol.g, scanCol.b, 1f);
         }
 
-        // GPU 텍스처 준비
-        Texture2D gpuTexture = new Texture2D(texture.width, texture.height, TextureFormat.RGBA32, false, false);
-        gpuTexture.SetPixels32(texture.GetPixels32());
-        gpuTexture.Apply(true, false);
-        gpuTexture.filterMode = FilterMode.Bilinear;
-        gpuTexture.wrapMode = TextureWrapMode.Clamp;
-
-        Object.Destroy(texture);
-
-        // 쉐이더 확인
-        Shader shader = sideMirrorShader != null ? sideMirrorShader : Shader.Find("LiveSketch/SideMirrorBlend");
-        if (shader == null)
-        {
-            Log("ERROR: SideMirrorBlend 쉐이더를 찾을 수 없음!");
-            Object.Destroy(gpuTexture);
-            return;
-        }
-
-        // 머티리얼 생성 및 설정
-        Material mat = new Material(shader);
-        mat.mainTexture = gpuTexture;
-        mat.SetTexture("_MainTex", gpuTexture);
-        mat.SetFloat("_HasTexture", 1f);
-        mat.SetColor("_BaseColor", new Color(0.85f, 0.85f, 0.85f, 1f));
-
-        // UV 설정 적용 (AnimalEntry 설정 우선, 없으면 기본값)
-        var entry = modelManager?.GetCurrentEntry();
-        if (entry != null)
-        {
-            mat.SetFloat("_OffsetX", entry.uvOffsetX);
-            mat.SetFloat("_OffsetY", entry.uvOffsetY);
-            mat.SetFloat("_ScaleX", entry.uvScaleX);
-            mat.SetFloat("_ScaleY", entry.uvScaleY);
-            Log($"AnimalEntry UV 설정 적용: {entry.qrText}");
-        }
-        else
-        {
-            mat.SetFloat("_OffsetX", uvOffsetX);
-            mat.SetFloat("_OffsetY", uvOffsetY);
-            mat.SetFloat("_ScaleX", uvScaleX);
-            mat.SetFloat("_ScaleY", uvScaleY);
-        }
-
-        // 텍스처에서 주요 색상 자동 추출
-        Color dominantColor = ExtractDominantColor(gpuTexture);
-        mat.SetColor("_OutOfBoundsColor", dominantColor);
-        mat.SetColor("_BaseColor", dominantColor);
-        Log($"자동 추출 색상: R={dominantColor.r:F2} G={dominantColor.g:F2} B={dominantColor.b:F2}");
-
-        // 빈 영역 채우기 설정
-        mat.SetFloat("_FillMode", fillMode);
-        mat.SetColor("_FillColor", fillColor);
-        mat.SetColor("_OutlineColor", outlineColor);
-        mat.SetFloat("_OutlineThickness", outlineThickness);
-        mat.SetFloat("_AlphaThreshold", 0.1f);
-        Log($"빈 영역 채우기 모드: {fillMode} ({(fillMode == 0 ? "회색" : fillMode == 1 ? "윤곽선" : "주요색상")})");
-
-        // 머티리얼 적용
-        renderer.material = mat;
-
-        Log($"텍스처 적용 완료: {renderer.name} ({gpuTexture.width}x{gpuTexture.height})");
+        var output = new Texture2D(bw, bh, TextureFormat.RGBA32, false);
+        output.SetPixels(result);
+        output.Apply();
+        output.filterMode = FilterMode.Bilinear;
+        return output;
     }
+
+    void Log(string m) { if (showLogs) Debug.Log($"[Scan] {m}"); }
 
     /// <summary>
-    /// 텍스처에서 주요 색상 추출 (흰색/투명 제외)
+    /// 현재 캐릭터 이름 반환 (에디터용)
     /// </summary>
-    private Color ExtractDominantColor(Texture2D texture)
-    {
-        var pixels = texture.GetPixels32();
-        float totalR = 0, totalG = 0, totalB = 0;
-        int count = 0;
+    public string GetCurrentCharacterName() => _currentCharacter;
 
-        // 샘플링 (전체 픽셀 중 일부만)
-        int step = Mathf.Max(1, pixels.Length / 5000);
-
-        for (int i = 0; i < pixels.Length; i += step)
-        {
-            var p = pixels[i];
-
-            // 투명 픽셀 제외
-            if (p.a < 128) continue;
-
-            // 흰색/밝은 색 제외 (배경)
-            float brightness = (p.r + p.g + p.b) / 3f / 255f;
-            if (brightness > 0.85f) continue;
-
-            // 너무 어두운 색도 제외 (윤곽선)
-            if (brightness < 0.1f) continue;
-
-            totalR += p.r;
-            totalG += p.g;
-            totalB += p.b;
-            count++;
-        }
-
-        if (count == 0)
-            return new Color(0.2f, 0.2f, 0.2f, 1f); // 기본값
-
-        return new Color(
-            totalR / count / 255f,
-            totalG / count / 255f,
-            totalB / count / 255f,
-            1f
-        );
-    }
-
-    private void Log(string message)
-    {
-        if (showDebugLogs)
-            Debug.Log($"[ScanProcessor] {message}");
-    }
+    /// <summary>
+    /// 현재 사용 중인 설정 반환 (에디터용)
+    /// </summary>
+    public CharacterColorSettings GetCurrentSettings() => _currentSettings;
 }

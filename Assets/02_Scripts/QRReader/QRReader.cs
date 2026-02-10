@@ -6,6 +6,9 @@ using UnityEngine;
 /// </summary>
 public static class QRReader
 {
+    // QR 인식에 적합한 최대 크기
+    private const int MAX_QR_SCAN_SIZE = 2000;
+
     /// <summary>
     /// 텍스처에서 QR 코드 텍스트 추출
     /// </summary>
@@ -14,6 +17,45 @@ public static class QRReader
         if (texture == null) return null;
 
 #if ZXING_AVAILABLE
+        // 이미지가 너무 크면 축소해서 시도
+        Texture2D scanTexture = texture;
+        bool needsDestroy = false;
+
+        if (texture.width > MAX_QR_SCAN_SIZE || texture.height > MAX_QR_SCAN_SIZE)
+        {
+            float scale = Mathf.Min((float)MAX_QR_SCAN_SIZE / texture.width, (float)MAX_QR_SCAN_SIZE / texture.height);
+            int newWidth = Mathf.RoundToInt(texture.width * scale);
+            int newHeight = Mathf.RoundToInt(texture.height * scale);
+
+            Debug.Log($"[QRReader] 이미지 축소: {texture.width}x{texture.height} → {newWidth}x{newHeight}");
+            scanTexture = ResizeTexture(texture, newWidth, newHeight);
+            needsDestroy = true;
+        }
+
+        try
+        {
+            string result = DecodeQR(scanTexture);
+            if (result != null)
+            {
+                Debug.Log($"[QRReader] QR 인식 성공: {result}");
+                return result;
+            }
+        }
+        finally
+        {
+            if (needsDestroy && scanTexture != null)
+                Object.Destroy(scanTexture);
+        }
+#else
+        Debug.LogWarning("[QRReader] ZXing 라이브러리 없음");
+#endif
+
+        return null;
+    }
+
+#if ZXING_AVAILABLE
+    private static string DecodeQR(Texture2D texture)
+    {
         try
         {
             var pixels = texture.GetPixels32();
@@ -38,25 +80,42 @@ public static class QRReader
             var binarizer = new ZXing.Common.HybridBinarizer(luminanceSource);
             var binaryBitmap = new ZXing.BinaryBitmap(binarizer);
 
-            var reader = new ZXing.QrCode.QRCodeReader();
-            var result = reader.decode(binaryBitmap);
-
-            if (result != null)
+            // TryHarder 힌트로 인식률 향상
+            var hints = new System.Collections.Generic.Dictionary<ZXing.DecodeHintType, object>
             {
-                Debug.Log($"[QRReader] QR 인식: {result.Text}");
-                return result.Text;
-            }
+                { ZXing.DecodeHintType.TRY_HARDER, true },
+                { ZXing.DecodeHintType.POSSIBLE_FORMATS, new System.Collections.Generic.List<ZXing.BarcodeFormat> { ZXing.BarcodeFormat.QR_CODE } }
+            };
+
+            var reader = new ZXing.MultiFormatReader();
+            var result = reader.decode(binaryBitmap, hints);
+
+            return result?.Text;
         }
         catch (System.Exception e)
         {
-            Debug.LogWarning($"[QRReader] QR 인식 실패: {e.Message}");
+            Debug.LogWarning($"[QRReader] QR 디코딩 실패: {e.Message}");
+            return null;
         }
-#else
-        Debug.LogWarning("[QRReader] ZXing 라이브러리 없음");
-#endif
-
-        return null;
     }
+
+    private static Texture2D ResizeTexture(Texture2D source, int newWidth, int newHeight)
+    {
+        RenderTexture rt = RenderTexture.GetTemporary(newWidth, newHeight, 0, RenderTextureFormat.ARGB32);
+        RenderTexture.active = rt;
+
+        Graphics.Blit(source, rt);
+
+        Texture2D result = new Texture2D(newWidth, newHeight, TextureFormat.RGBA32, false);
+        result.ReadPixels(new Rect(0, 0, newWidth, newHeight), 0, 0);
+        result.Apply();
+
+        RenderTexture.active = null;
+        RenderTexture.ReleaseTemporary(rt);
+
+        return result;
+    }
+#endif
 
     /// <summary>
     /// 특정 영역에서만 QR 코드 인식

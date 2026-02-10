@@ -20,13 +20,24 @@ public static class ImageOrientationCorrector
         BottomLeft   // 180도 회전 필요
     }
 
-    // 코너 영역 정의 (QR이 코너 근처에 있으므로 40% 영역으로 확대)
+    // 코너 영역 정의 - 겹침 없이 4분할 (각 45% 크기)
+    // x: 좌측 0~45%, 우측 55~100%
+    // y: 하단 0~45%, 상단 55~100%
     private static readonly (Rect region, QRPosition position, string name)[] Corners = new[]
     {
-        (new Rect(0.60f, 0.60f, 0.40f, 0.40f), QRPosition.TopRight, "우상단"),
-        (new Rect(0.0f, 0.60f, 0.40f, 0.40f), QRPosition.TopLeft, "좌상단"),
-        (new Rect(0.60f, 0.0f, 0.40f, 0.40f), QRPosition.BottomRight, "우하단"),
-        (new Rect(0.0f, 0.0f, 0.40f, 0.40f), QRPosition.BottomLeft, "좌하단"),
+        (new Rect(0.55f, 0.55f, 0.45f, 0.45f), QRPosition.TopRight, "우상단"),    // 우측 상단
+        (new Rect(0.0f, 0.55f, 0.45f, 0.45f), QRPosition.TopLeft, "좌상단"),      // 좌측 상단
+        (new Rect(0.55f, 0.0f, 0.45f, 0.45f), QRPosition.BottomRight, "우하단"),  // 우측 하단
+        (new Rect(0.0f, 0.0f, 0.45f, 0.45f), QRPosition.BottomLeft, "좌하단"),    // 좌측 하단
+    };
+
+    // 확장 검색용 더 큰 영역 (55% 크기, 약간의 겹침 허용)
+    private static readonly (Rect region, QRPosition position, string name)[] LargeCorners = new[]
+    {
+        (new Rect(0.45f, 0.45f, 0.55f, 0.55f), QRPosition.TopRight, "우상단(확장)"),
+        (new Rect(0.0f, 0.45f, 0.55f, 0.55f), QRPosition.TopLeft, "좌상단(확장)"),
+        (new Rect(0.45f, 0.0f, 0.55f, 0.55f), QRPosition.BottomRight, "우하단(확장)"),
+        (new Rect(0.0f, 0.0f, 0.55f, 0.55f), QRPosition.BottomLeft, "좌하단(확장)"),
     };
 
     /// <summary>
@@ -37,59 +48,65 @@ public static class ImageOrientationCorrector
         if (source == null)
             return (null, QRPosition.Unknown, null);
 
-        Debug.Log($"[ImageOrientationCorrector] 이미지 분석 시작: {source.width}x{source.height}");
+        Debug.Log($"[Orientation] 이미지 분석: {source.width}x{source.height}");
 
-        // 1. 모든 코너에서 QR 검색 (어느 코너에서 발견되는지 정확히 파악)
+        // 1단계: 코너별 검색 (겹침 없는 영역)
         string foundQRText = null;
         QRPosition foundPosition = QRPosition.Unknown;
-        int foundCount = 0;
 
         foreach (var (region, position, name) in Corners)
         {
             string qrText = QRReader.ReadQRCodeInRegion(source, region);
             if (!string.IsNullOrEmpty(qrText))
             {
-                Debug.Log($"[ImageOrientationCorrector] ✓ {name}에서 QR 발견: '{qrText}'");
-
-                // 첫 번째 발견된 것 저장
-                if (foundQRText == null)
-                {
-                    foundQRText = qrText;
-                    foundPosition = position;
-                }
-                foundCount++;
-            }
-            else
-            {
-                Debug.Log($"[ImageOrientationCorrector] ✗ {name}: QR 없음");
+                Debug.Log($"[Orientation] ✓ {name}에서 QR 발견: '{qrText}' → {GetCorrectionName(position)}");
+                foundQRText = qrText;
+                foundPosition = position;
+                break; // 첫 번째 발견 시 즉시 종료
             }
         }
 
-        // 2. 결과 처리
-        if (foundCount == 0)
+        // 2단계: 1단계 실패 시 확장 영역으로 재검색
+        if (foundQRText == null)
         {
-            // 코너에서 못 찾으면 전체 이미지에서 시도
-            Debug.Log("[ImageOrientationCorrector] 코너에서 QR 없음, 전체 이미지 검색 시도...");
-            string fullQR = QRReader.ReadQRCode(source);
-
-            if (!string.IsNullOrEmpty(fullQR))
+            Debug.Log($"[Orientation] 기본 영역 검색 실패 → 확장 영역 검색");
+            foreach (var (region, position, name) in LargeCorners)
             {
-                Debug.LogWarning($"[ImageOrientationCorrector] 전체에서 QR 발견: '{fullQR}' - 위치 특정 불가, 정상 방향 가정");
-                return (fullQR, QRPosition.TopRight, DuplicateTexture(source));
+                string qrText = QRReader.ReadQRCodeInRegion(source, region);
+                if (!string.IsNullOrEmpty(qrText))
+                {
+                    Debug.Log($"[Orientation] ✓ {name}에서 QR 발견: '{qrText}' → {GetCorrectionName(position)}");
+                    foundQRText = qrText;
+                    foundPosition = position;
+                    break;
+                }
             }
+        }
 
-            Debug.LogWarning("[ImageOrientationCorrector] QR 코드를 찾을 수 없음");
+        // 3단계: 확장 영역도 실패 시 전체 이미지 검색
+        if (foundQRText == null)
+        {
+            Debug.Log($"[Orientation] 확장 영역 검색 실패 → 전체 이미지 검색");
+            foundQRText = QRReader.ReadQRCode(source);
+
+            if (!string.IsNullOrEmpty(foundQRText))
+            {
+                // 전체에서 찾았지만 위치 특정 불가 → 정상 방향 가정
+                Debug.LogWarning($"[Orientation] 전체 이미지에서 QR 발견: '{foundQRText}' - 위치 특정 불가 → 정상 방향 가정");
+                foundPosition = QRPosition.TopRight;
+            }
+        }
+
+        // 결과 처리
+        if (foundQRText == null)
+        {
+            Debug.LogWarning("[Orientation] QR 코드를 찾을 수 없음");
             return (null, QRPosition.Unknown, null);
         }
 
-        if (foundCount > 1)
-        {
-            Debug.LogWarning($"[ImageOrientationCorrector] 경고: QR이 {foundCount}개 코너에서 발견됨! 첫 번째 사용: {foundPosition}");
-        }
-
-        // 3. 이미지 방향 보정
-        Debug.Log($"[ImageOrientationCorrector] 최종 결정: {foundPosition} → {GetCorrectionName(foundPosition)}");
+        // 이미지 방향 보정
         var corrected = CorrectOrientation(source, foundPosition);
+        Debug.Log($"[Orientation] 최종: {foundPosition} ({GetCorrectionName(foundPosition)})");
 
         return (foundQRText, foundPosition, corrected);
     }
