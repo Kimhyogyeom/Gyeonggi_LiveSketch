@@ -172,6 +172,9 @@ public class Model3DManager : MonoBehaviour
     [Tooltip("스폰 음성 재생용 AudioSource (비워두면 자동 생성)")]
     [SerializeField] private AudioSource spawnAudioSource;
 
+    [Tooltip("스폰 안내 배너 (슬라이드 UI, 비워두면 사용 안 함)")]
+    [SerializeField] private SpawnAnnouncementBanner spawnBanner;
+
     [Header("=== 머티리얼 설정 ===")]
     [Tooltip("기존 Material 무시하고 항상 새로 생성")]
     [SerializeField] private bool forceNewMaterial = true;
@@ -243,6 +246,9 @@ public class Model3DManager : MonoBehaviour
         public Vector3 baseRotation;
         public bool isExiting;
         public Mesh originalMesh; // BakedFront 재구움용 원본 메시 캐시
+
+        // 개인 배회 범위 (구역 밖 스폰 시 스폰 위치 기준으로 설정)
+        public float personalMinX, personalMaxX, personalMinY, personalMaxY;
     }
 
     public event Action<GameObject, Renderer> OnModelSpawned;
@@ -456,13 +462,13 @@ public class Model3DManager : MonoBehaviour
                         float t = 1f - dist / separationDistance;
                         separation += pushDir * (t * t);
 
-                        // 목표점이 상대방 근처면 → 반대 방향으로 목표 변경
+                        // 목표점이 상대방 근처면 → 개인 범위 내에서 반대 방향으로 목표 변경
                         Vector3 targetDiff = model.wanderTarget - otherPos;
                         targetDiff.z = 0;
                         if (targetDiff.magnitude < separationDistance)
                         {
-                            float awayX = Mathf.Clamp(pos.x + pushDir.x * separationDistance * 3f, entry.moveMinX, entry.moveMaxX);
-                            float awayY = Mathf.Clamp(pos.y + pushDir.y * separationDistance * 3f, entry.moveMinY, entry.moveMaxY);
+                            float awayX = Mathf.Clamp(pos.x + pushDir.x * separationDistance * 3f, model.personalMinX, model.personalMaxX);
+                            float awayY = Mathf.Clamp(pos.y + pushDir.y * separationDistance * 3f, model.personalMinY, model.personalMaxY);
                             model.wanderTarget = new Vector3(awayX, awayY, 0);
                         }
                     }
@@ -475,11 +481,11 @@ public class Model3DManager : MonoBehaviour
                 }
             }
 
-            // 범위 체크 - 벗어나면 새 목표로 리셋
-            if (newPos.x < entry.moveMinX || newPos.x > entry.moveMaxX ||
-                newPos.y < entry.moveMinY || newPos.y > entry.moveMaxY)
+            // 범위 체크 - 개인 배회 범위를 벗어나면 새 목표로 리셋
+            if (newPos.x < model.personalMinX || newPos.x > model.personalMaxX ||
+                newPos.y < model.personalMinY || newPos.y > model.personalMaxY)
             {
-                model.wanderTarget = GetRandomTarget(entry);
+                model.wanderTarget = GetPersonalRandomTarget(model);
                 model.dampVelocity = Vector3.zero;
                 continue;
             }
@@ -508,7 +514,7 @@ public class Model3DManager : MonoBehaviour
             // 목표 근처 도착하면 대기 후 새 목표
             if (Vector3.Distance(pos, target) < 0.3f)
             {
-                model.wanderTarget = GetRandomTarget(entry);
+                model.wanderTarget = GetPersonalRandomTarget(model);
                 model.waitTimer = UnityEngine.Random.Range(entry.waitMin, entry.waitMax);
             }
         }
@@ -525,9 +531,19 @@ public class Model3DManager : MonoBehaviour
     }
 
     /// <summary>
+    /// 모델의 개인 배회 범위 안에서 랜덤 목표 위치 반환
+    /// </summary>
+    private Vector3 GetPersonalRandomTarget(SpawnedModel model)
+    {
+        float x = UnityEngine.Random.Range(model.personalMinX, model.personalMaxX);
+        float y = UnityEngine.Random.Range(model.personalMinY, model.personalMaxY);
+        return new Vector3(x, y, 0);
+    }
+
+    /// <summary>
     /// 기존 모델과 겹치지 않는 스폰 위치 찾기
     /// separationDistance 이내에 다른 모델이 있으면 다른 위치 시도
-    /// maxAttempts번 시도 후에도 못 찾으면 가장 멀리 떨어진 위치 반환
+    /// maxAttempts번 시도 후에도 못 찾으면 구역 밖으로 확장하여 겹치지 않는 위치 반환
     /// </summary>
     private Vector3 FindNonOverlappingPosition(Model3DEntry entry, int maxAttempts = 30)
     {
@@ -535,38 +551,95 @@ public class Model3DManager : MonoBehaviour
             return GetRandomTarget(entry);
 
         float minDist = separationDistance;
-        Vector3 bestPos = Vector3.zero;
-        float bestMinDist = -1f;
 
+        // 1단계: 지정된 구역 안에서 시도
         for (int attempt = 0; attempt < maxAttempts; attempt++)
         {
             Vector3 candidate = GetRandomTarget(entry);
-            float closestDist = float.MaxValue;
-
-            foreach (var model in _spawnedModels)
-            {
-                if (model.instance == null || model.isExiting) continue;
-                Vector3 diff = candidate - model.instance.transform.position;
-                diff.z = 0;
-                float dist = diff.magnitude;
-                if (dist < closestDist)
-                    closestDist = dist;
-            }
-
-            // 충분히 떨어져 있으면 바로 사용
-            if (closestDist >= minDist)
+            if (IsPositionClear(candidate, minDist))
                 return candidate;
+        }
 
-            // 가장 멀리 떨어진 후보 기록
-            if (closestDist > bestMinDist)
+        // 2단계: 구역 안에서 못 찾으면 → 구역 밖으로 확장
+        Debug.Log($"[Model3DManager] 구역 내 겹치지 않는 위치 못 찾음 → 구역 밖 확장 탐색");
+
+        float rangeW = entry.moveMaxX - entry.moveMinX;
+        float rangeH = entry.moveMaxY - entry.moveMinY;
+        float expand = separationDistance;
+
+        for (int attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            // 확장 범위를 점점 넓힘
+            float mul = 1f + (float)(attempt + 1) / maxAttempts;
+            float exMinX = entry.moveMinX - rangeW * mul * 0.5f;
+            float exMaxX = entry.moveMaxX + rangeW * mul * 0.5f;
+            float exMinY = entry.moveMinY - rangeH * mul * 0.5f;
+            float exMaxY = entry.moveMaxY + rangeH * mul * 0.5f;
+
+            float x = UnityEngine.Random.Range(exMinX, exMaxX);
+            float y = UnityEngine.Random.Range(exMinY, exMaxY);
+            Vector3 candidate = new Vector3(x, y, 0);
+
+            if (IsPositionClear(candidate, minDist))
             {
-                bestMinDist = closestDist;
-                bestPos = candidate;
+                Debug.Log($"[Model3DManager] 구역 밖 위치 찾음: ({x:F2}, {y:F2})");
+                return candidate;
             }
         }
 
-        Debug.Log($"[Model3DManager] 겹치지 않는 위치 못 찾음 → 가장 먼 위치 사용 (최소거리: {bestMinDist:F2})");
-        return bestPos;
+        // 최후 수단: 기존 모델들의 가장 바깥쪽에 배치
+        Vector3 fallback = GetFallbackOutsidePosition(entry);
+        Debug.Log($"[Model3DManager] 확장 탐색도 실패 → 최외곽 배치: ({fallback.x:F2}, {fallback.y:F2})");
+        return fallback;
+    }
+
+    /// <summary>
+    /// 후보 위치가 기존 모델과 충분히 떨어져 있는지 확인
+    /// </summary>
+    private bool IsPositionClear(Vector3 candidate, float minDist)
+    {
+        foreach (var model in _spawnedModels)
+        {
+            if (model.instance == null || model.isExiting) continue;
+            Vector3 diff = candidate - model.instance.transform.position;
+            diff.z = 0;
+            if (diff.magnitude < minDist)
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// 모든 시도 실패 시 기존 모델들의 가장 바깥쪽에 separationDistance만큼 떨어진 위치 반환
+    /// </summary>
+    private Vector3 GetFallbackOutsidePosition(Model3DEntry entry)
+    {
+        // 기존 모델들의 AABB 계산
+        float allMinX = float.MaxValue, allMaxX = float.MinValue;
+        float allMinY = float.MaxValue, allMaxY = float.MinValue;
+
+        foreach (var model in _spawnedModels)
+        {
+            if (model.instance == null || model.isExiting) continue;
+            Vector3 pos = model.instance.transform.position;
+            if (pos.x < allMinX) allMinX = pos.x;
+            if (pos.x > allMaxX) allMaxX = pos.x;
+            if (pos.y < allMinY) allMinY = pos.y;
+            if (pos.y > allMaxY) allMaxY = pos.y;
+        }
+
+        // 4방향 중 랜덤 선택하여 바깥에 배치
+        float cx = (entry.moveMinX + entry.moveMaxX) * 0.5f;
+        float cy = (entry.moveMinY + entry.moveMaxY) * 0.5f;
+        int dir = UnityEngine.Random.Range(0, 4);
+
+        switch (dir)
+        {
+            case 0: return new Vector3(allMaxX + separationDistance, cy, 0); // 오른쪽
+            case 1: return new Vector3(allMinX - separationDistance, cy, 0); // 왼쪽
+            case 2: return new Vector3(cx, allMaxY + separationDistance, 0); // 위
+            default: return new Vector3(cx, allMinY - separationDistance, 0); // 아래
+        }
     }
 
     /// <summary>
@@ -674,6 +747,31 @@ public class Model3DManager : MonoBehaviour
 
         Debug.Log($"[Model3DManager] Renderer: {renderer.GetType().Name}, Material: {mat.shader.name}");
 
+        // 개인 배회 범위 계산 (구역 밖 스폰 시 스폰 위치 기준)
+        bool isOutsideBounds = randomPos.x < entry.moveMinX || randomPos.x > entry.moveMaxX ||
+                               randomPos.y < entry.moveMinY || randomPos.y > entry.moveMaxY;
+
+        float pMinX, pMaxX, pMinY, pMaxY;
+        if (isOutsideBounds)
+        {
+            // 구역 밖: 스폰 위치 중심으로 원래 구역 크기만큼 배회 범위 설정
+            float halfW = (entry.moveMaxX - entry.moveMinX) * 0.3f;
+            float halfH = (entry.moveMaxY - entry.moveMinY) * 0.3f;
+            pMinX = randomPos.x - halfW;
+            pMaxX = randomPos.x + halfW;
+            pMinY = randomPos.y - halfH;
+            pMaxY = randomPos.y + halfH;
+            Debug.Log($"[Model3DManager] 구역 밖 스폰 → 개인 배회 범위: ({pMinX:F2}~{pMaxX:F2}, {pMinY:F2}~{pMaxY:F2})");
+        }
+        else
+        {
+            // 구역 안: 원래 범위 사용
+            pMinX = entry.moveMinX;
+            pMaxX = entry.moveMaxX;
+            pMinY = entry.moveMinY;
+            pMaxY = entry.moveMaxY;
+        }
+
         // 스폰 목록에 추가
         var spawned = new SpawnedModel
         {
@@ -683,12 +781,16 @@ public class Model3DManager : MonoBehaviour
             qrText = entry.qrText,
             appliedTexture = null,
             moveSpeed = UnityEngine.Random.Range(entry.moveSpeedMin, entry.moveSpeedMax),
-            wanderTarget = GetRandomTarget(entry),
+            wanderTarget = isOutsideBounds ? randomPos : GetRandomTarget(entry),
             dampVelocity = Vector3.zero,
             facingRight = true,
             flipCooldown = 0f,
             waitTimer = enableSpawnEffect ? spawnEffectGatherDuration + spawnEffectScaleDuration : 0f,
-            baseRotation = entry.spawnRotation
+            baseRotation = entry.spawnRotation,
+            personalMinX = pMinX,
+            personalMaxX = pMaxX,
+            personalMinY = pMinY,
+            personalMaxY = pMaxY
         };
         _spawnedModels.Add(spawned);
 
@@ -698,11 +800,16 @@ public class Model3DManager : MonoBehaviour
         CurrentMaterial = mat;
         CurrentQRText = entry.qrText;
 
-        // 스폰 이펙트 실행
+        // 스폰 안내 배너
+        if (spawnBanner != null)
+            spawnBanner.Show(entry.qrText);
+
+        // 스폰 이펙트 실행 (배너가 있으면 기존 텍스트 사용 안 함)
         if (enableSpawnEffect)
         {
             var effect = instance.AddComponent<SpawnEffect>();
-            effect.Play(entry.spawnScale, spawnEffectGatherDuration, spawnEffectScaleDuration, entry.effectColor, entry.qrText, spawnAnnouncementText, entry.effectMaterial, entry.burstEffectMaterial, entry.effectRange);
+            TMP_Text effectText = (spawnBanner != null) ? null : spawnAnnouncementText;
+            effect.Play(entry.spawnScale, spawnEffectGatherDuration, spawnEffectScaleDuration, entry.effectColor, entry.qrText, effectText, entry.effectMaterial, entry.burstEffectMaterial, entry.effectRange);
         }
 
         // 스폰 음성 재생
@@ -1313,4 +1420,13 @@ public class Model3DManager : MonoBehaviour
     }
 
     public int EntryCount => modelEntries.Count;
+
+    /// <summary>
+    /// 인덱스로 QR 텍스트 반환 (수동 스폰용)
+    /// </summary>
+    public string GetEntryQRText(int index)
+    {
+        if (index < 0 || index >= modelEntries.Count) return null;
+        return modelEntries[index].qrText;
+    }
 }

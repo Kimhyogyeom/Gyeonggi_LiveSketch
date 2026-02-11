@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 /// <summary>
 /// 캐릭터별 색상 합성 설정
@@ -80,6 +81,10 @@ public class ScanProcessor : MonoBehaviour
     [Header("=== 런타임 조정 ===")]
     [SerializeField] private bool liveAdjust = true;
 
+    [Header("=== 수동 스폰 (스캔 없이) ===")]
+    [Tooltip("characterSettings 리스트에서 스폰할 캐릭터 인덱스")]
+    [SerializeField] private int manualSpawnIndex = 0;
+
     [Header("=== 디버그 ===")]
     [SerializeField] private bool showLogs = true;
 
@@ -104,6 +109,12 @@ public class ScanProcessor : MonoBehaviour
 
     void Update()
     {
+        // 수동 스폰: Space 키
+        if (Keyboard.current != null && Keyboard.current.spaceKey.wasPressedThisFrame)
+        {
+            ManualSpawn();
+        }
+
         if (!liveAdjust || _scanTex == null || _baseTex == null || _sr == null || _currentSettings == null) return;
 
         // 현재 설정값 변경 감지
@@ -158,6 +169,26 @@ public class ScanProcessor : MonoBehaviour
         }
         Log($"캐릭터 설정 없음: {qrText} → 기본값 사용");
         return defaultSettings;
+    }
+
+    /// <summary>
+    /// 수동 스폰 - 스캔 없이 베이스 스프라이트만으로 캐릭터 생성
+    /// </summary>
+    void ManualSpawn()
+    {
+        if (characterSettings == null || characterSettings.Count == 0) return;
+
+        int idx = Mathf.Clamp(manualSpawnIndex, 0, characterSettings.Count - 1);
+        string charName = characterSettings[idx].characterName;
+        if (string.IsNullOrEmpty(charName)) return;
+
+        _currentCharacter = charName;
+        _currentSettings = characterSettings[idx];
+
+        modelManager?.SpawnSpriteByQR(charName);
+        _sr = modelManager?.GetCurrentSpriteRenderer();
+
+        Log($"수동 스폰: {charName} (인덱스 {idx})");
     }
 
     void OnScan(Texture2D tex, string path)
@@ -332,8 +363,22 @@ public class ScanProcessor : MonoBehaviour
             }
             else
             {
-                bounds = new Rect(cropMin.x, cropMin.y, cropMax.x - cropMin.x, cropMax.y - cropMin.y);
-                Log($"마커 감지 실패 → 기본값 사용: ({bounds.x:F2}, {bounds.y:F2}) ~ ({bounds.xMax:F2}, {bounds.yMax:F2})");
+                // 재시도: 대비 강화 이미지로 마커 재감지
+                Log("마커 감지 실패 → 대비 강화 후 재시도...");
+                Texture2D enhanced = EnhanceForMarkerDetection(src);
+                det = CornerMarkerDetector.DetectMarkers(enhanced);
+                Destroy(enhanced);
+
+                if (det.success)
+                {
+                    bounds = det.sketchBounds;
+                    Log($"대비 강화 후 마커 감지 성공! 크롭 영역: ({bounds.x:F2}, {bounds.y:F2}) ~ ({bounds.xMax:F2}, {bounds.yMax:F2})");
+                }
+                else
+                {
+                    bounds = new Rect(cropMin.x, cropMin.y, cropMax.x - cropMin.x, cropMax.y - cropMin.y);
+                    Log($"모든 감지 시도 실패 → 기본값 사용: ({bounds.x:F2}, {bounds.y:F2}) ~ ({bounds.xMax:F2}, {bounds.yMax:F2})");
+                }
             }
         }
         else
@@ -436,6 +481,29 @@ public class ScanProcessor : MonoBehaviour
         output.Apply();
         output.filterMode = FilterMode.Bilinear;
         return output;
+    }
+
+    /// <summary>
+    /// 마커 감지용 대비 강화 (어두운 부분 더 어둡게, 밝은 부분 더 밝게)
+    /// </summary>
+    Texture2D EnhanceForMarkerDetection(Texture2D source)
+    {
+        var pixels = source.GetPixels();
+        var result = new Color[pixels.Length];
+
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            Color c = pixels[i];
+            float r = Mathf.Clamp01((c.r - 0.5f) * 1.5f + 0.5f);
+            float g = Mathf.Clamp01((c.g - 0.5f) * 1.5f + 0.5f);
+            float b = Mathf.Clamp01((c.b - 0.5f) * 1.5f + 0.5f);
+            result[i] = new Color(r, g, b, c.a);
+        }
+
+        var tex = new Texture2D(source.width, source.height, TextureFormat.RGBA32, false);
+        tex.SetPixels(result);
+        tex.Apply();
+        return tex;
     }
 
     void Log(string m) { if (showLogs) Debug.Log($"[Scan] {m}"); }

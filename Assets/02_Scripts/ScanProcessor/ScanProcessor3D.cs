@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 /// <summary>
 /// 3D 모델용 스캔 프로세서
@@ -54,6 +55,10 @@ public class ScanProcessor3D : MonoBehaviour
     [Tooltip("오디오 재생용 AudioSource (비워두면 자동 생성)")]
     [SerializeField] private AudioSource audioSource;
 
+    [Header("=== 수동 스폰 (스캔 없이) ===")]
+    [Tooltip("Model3DManager의 modelEntries 리스트에서 스폰할 캐릭터 인덱스")]
+    [SerializeField] private int manualSpawnIndex = 0;
+
     [Header("=== 디버그 ===")]
     [SerializeField] private bool showLogs = true;
 
@@ -71,6 +76,31 @@ public class ScanProcessor3D : MonoBehaviour
     {
         if (watcher != null)
             watcher.OnScanTextureReady -= OnScanReceived;
+    }
+
+    void Update()
+    {
+        if (Keyboard.current != null && Keyboard.current.spaceKey.wasPressedThisFrame)
+        {
+            ManualSpawn();
+        }
+    }
+
+    /// <summary>
+    /// 수동 스폰 - 스캔 없이 3D 모델만 생성
+    /// </summary>
+    void ManualSpawn()
+    {
+        if (modelManager == null) return;
+
+        string qrText = modelManager.GetEntryQRText(manualSpawnIndex);
+        if (string.IsNullOrEmpty(qrText)) return;
+
+        bool success = modelManager.SpawnModelByQR(qrText);
+        if (success)
+            Log($"수동 스폰: {qrText} (인덱스 {manualSpawnIndex})");
+        else
+            Log($"수동 스폰 실패: {qrText}");
     }
 
     /// <summary>

@@ -118,7 +118,8 @@ public static class QRReader
 #endif
 
     /// <summary>
-    /// 특정 영역에서만 QR 코드 인식
+    /// 특정 영역에서만 QR 코드 인식.
+    /// 첫 시도 실패 시 대비 향상 후 재시도.
     /// </summary>
     public static string ReadQRCodeInRegion(Texture2D texture, Rect normalizedRegion)
     {
@@ -139,10 +140,72 @@ public static class QRReader
         regionTex.SetPixels(pixels);
         regionTex.Apply();
 
+        // 1차 시도: 원본
         var result = ReadQRCode(regionTex);
-        Object.Destroy(regionTex);
 
+        // 2차 시도: 대비 향상 후 재시도
+        if (result == null)
+        {
+            var enhanced = EnhanceContrast(regionTex);
+            result = ReadQRCode(enhanced);
+            Object.Destroy(enhanced);
+
+            if (result != null)
+                Debug.Log($"[QRReader] 대비 향상 후 QR 인식 성공: {result}");
+        }
+
+        Object.Destroy(regionTex);
         return result;
+    }
+
+    /// <summary>
+    /// 히스토그램 스트레칭으로 대비 향상 (QR 인식률 개선)
+    /// </summary>
+    private static Texture2D EnhanceContrast(Texture2D source)
+    {
+        if (source == null) return null;
+
+        var pixels = source.GetPixels32();
+        int total = pixels.Length;
+
+        // 밝기 히스토그램 생성
+        int[] histogram = new int[256];
+        byte[] luminance = new byte[total];
+
+        for (int i = 0; i < total; i++)
+        {
+            byte lum = (byte)(0.299f * pixels[i].r + 0.587f * pixels[i].g + 0.114f * pixels[i].b);
+            luminance[i] = lum;
+            histogram[lum]++;
+        }
+
+        // 5th / 95th percentile 찾기
+        int low = 0, high = 255;
+        int cumulative = 0;
+        int threshold5 = total * 5 / 100;
+        int threshold95 = total * 95 / 100;
+
+        for (int i = 0; i < 256; i++)
+        {
+            cumulative += histogram[i];
+            if (cumulative >= threshold5 && low == 0) low = i;
+            if (cumulative >= threshold95) { high = i; break; }
+        }
+
+        float range = Mathf.Max(1f, high - low);
+
+        // 대비 스트레칭 (그레이스케일)
+        var result = new Color32[total];
+        for (int i = 0; i < total; i++)
+        {
+            byte val = (byte)Mathf.Clamp(((luminance[i] - low) / range) * 255f, 0f, 255f);
+            result[i] = new Color32(val, val, val, 255);
+        }
+
+        var tex = new Texture2D(source.width, source.height, TextureFormat.RGBA32, false);
+        tex.SetPixels32(result);
+        tex.Apply();
+        return tex;
     }
 
     /// <summary>
