@@ -22,7 +22,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 54ae54cd84faf18478e4108d1810f735, type: 3}
       propertyPath: m_LocalRotation.w
-      value: 1
+      value: 0.7071068
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 54ae54cd84faf18478e4108d1810f735, type: 3}
       propertyPath: m_LocalRotation.x
@@ -30,7 +30,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 54ae54cd84faf18478e4108d1810f735, type: 3}
       propertyPath: m_LocalRotation.y
-      value: 0
+      value: 0.7071068
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 54ae54cd84faf18478e4108d1810f735, type: 3}
       propertyPath: m_LocalRotation.z
@@ -42,7 +42,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 54ae54cd84faf18478e4108d1810f735, type: 3}
       propertyPath: m_LocalEulerAnglesHint.y
-      value: 0
+      value: 90
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 54ae54cd84faf18478e4108d1810f735, type: 3}
       propertyPath: m_LocalEulerAnglesHint.z
@@ -166,6 +166,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 54ae54cd84faf18478e4108d1810f735, type: 3}
       insertIndex: -1
       addedObject: {fileID: 5446094008534579025}
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 54ae54cd84faf18478e4108d1810f735, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 3133904771182441674}
   m_SourcePrefab: {fileID: 100100000, guid: 54ae54cd84faf18478e4108d1810f735, type: 3}
 --- !u!1 &4345670036549161060 stripped
 GameObject:
@@ -206,7 +209,22 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e92c9231e91c1ef4b807705ff9f5e29f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  scaleMin: 1
-  scaleMax: 1.1
+  scaleMin: 1.5
+  scaleMax: 1.6
   speed: 1
   randomStartOffset: 1
+--- !u!114 &3133904771182441674
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4345670036549161060}
+  m_Enabled: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8ebfc46a766fd1041882d281bcddbaec, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  jumpForce: 1
+  gravity: 0.1
+  groundOffset: 0

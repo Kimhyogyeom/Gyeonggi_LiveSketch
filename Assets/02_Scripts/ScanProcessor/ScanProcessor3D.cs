@@ -121,9 +121,7 @@ public class ScanProcessor3D : MonoBehaviour
     {
         Log($"스캔 수신: {tex.width}x{tex.height}");
 
-        // 0. 성능: 이미지가 크면 GPU로 축소 (Graphics.Blit = 즉시)
-        //    스캐너 원본(2400x3500) → 축소(~1018x1500) = 픽셀 5.6배 감소
-        //    3D 모델 텍스처에 스캐너 원본 해상도는 불필요
+        // 0. QR 감지용 축소 이미지 생성 (원본은 최종 텍스처용으로 보존)
         Texture2D processingTex = tex;
         bool needsProcessingTexDestroy = false;
 
@@ -134,18 +132,22 @@ public class ScanProcessor3D : MonoBehaviour
             int newH = Mathf.RoundToInt(tex.height * scale);
             processingTex = DownscaleTextureGPU(tex, newW, newH);
             needsProcessingTexDestroy = true;
-            Log($"이미지 축소: {tex.width}x{tex.height} → {newW}x{newH} (처리 속도 향상)");
+            Log($"QR 감지용 축소: {tex.width}x{tex.height} → {newW}x{newH}");
         }
 
         yield return null;
 
-        // 1. QR 코드 감지 + 이미지 방향 보정 (축소된 이미지로 처리 → 훨씬 빠름)
-        var (qrText, position, correctedImage) = ImageOrientationCorrector.DetectAndCorrect(processingTex);
+        // 1. QR 코드 감지 (축소 이미지로 빠르게 → 방향만 파악)
+        var (qrText, position, correctedSmall) = ImageOrientationCorrector.DetectAndCorrect(processingTex);
 
         if (needsProcessingTexDestroy)
             Destroy(processingTex);
 
-        if (string.IsNullOrEmpty(qrText) || correctedImage == null)
+        // 축소본 보정 이미지는 더 이상 필요 없음
+        if (correctedSmall != null)
+            Destroy(correctedSmall);
+
+        if (string.IsNullOrEmpty(qrText) || position == ImageOrientationCorrector.QRPosition.Unknown)
         {
             Log("QR 코드 감지 실패");
             PlayFailAudio();
@@ -157,20 +159,26 @@ public class ScanProcessor3D : MonoBehaviour
 
         yield return null;
 
-        // 2. 3D 모델 스폰 (비동기 → 렉 방지)
+        // 2. 원본 고해상도 이미지에 같은 방향 보정 적용 (선명한 최종 텍스처)
+        Texture2D correctedHiRes = ImageOrientationCorrector.CorrectOrientation(tex, position);
+        Log($"고해상도 보정 완료: {correctedHiRes.width}x{correctedHiRes.height}");
+
+        yield return null;
+
+        // 3. 3D 모델 스폰 (비동기 → 렉 방지)
         bool spawnSuccess = false;
         yield return StartCoroutine(modelManager.SpawnModelByQRAsync(qrText, success => spawnSuccess = success));
         if (!spawnSuccess)
         {
             Log($"모델 스폰 실패: {qrText}");
             PlayFailAudio();
-            Destroy(correctedImage);
+            Destroy(correctedHiRes);
             yield break;
         }
 
-        // 3. 마커 기반 크롭
-        Texture2D croppedTexture = CropDrawingArea(correctedImage);
-        Destroy(correctedImage);
+        // 4. 마커 기반 크롭 (고해상도 이미지에서)
+        Texture2D croppedTexture = CropDrawingArea(correctedHiRes);
+        Destroy(correctedHiRes);
 
         if (croppedTexture == null)
         {
@@ -178,10 +186,12 @@ public class ScanProcessor3D : MonoBehaviour
             yield break;
         }
 
+        Log($"고해상도 크롭: {croppedTexture.width}x{croppedTexture.height}");
+
         // 프레임 분산: 크롭 후 1프레임 대기
         yield return null;
 
-        // 4. 배경 제거 (선택적)
+        // 5. 배경 제거 (선택적)
         Texture2D processedTexture = croppedTexture;
         if (removeBackground)
         {
@@ -193,17 +203,16 @@ public class ScanProcessor3D : MonoBehaviour
             yield return null;
         }
 
-        // 5. 텍스처 설정 적용
+        // 6. 텍스처 설정 적용
         processedTexture.filterMode = textureFilterMode;
         processedTexture.wrapMode = textureWrapMode;
+        processedTexture.anisoLevel = 4; // 비스듬한 각도에서도 선명하게
 
-        // 6. 3D 모델에 텍스처 적용
+        // 7. 3D 모델에 텍스처 적용
         bool applied = modelManager?.ApplyTextureToCurrentModel(processedTexture) ?? false;
 
         if (applied)
         {
-            // 텍스처는 Model3DManager가 관리 (SpawnedModel.appliedTexture)
-            // 여기서 이전 텍스처를 Destroy하면 이전 모델이 검은색으로 변함!
             _lastScanTexture = processedTexture;
             Log($"텍스처 적용 완료: {processedTexture.width}x{processedTexture.height}");
         }

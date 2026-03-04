@@ -1,5 +1,6 @@
 using System.Collections;
 using UnityEngine;
+using UnityEngine.UI;
 using TMPro;
 
 /// <summary>
@@ -14,6 +15,9 @@ public class SpawnAnnouncementBanner : MonoBehaviour
     [Tooltip("캐릭터 이름 표시용 텍스트")]
     [SerializeField] private TMP_Text announcementText;
 
+    [Tooltip("캐릭터 이미지 표시용 (비워두면 이미지 표시 안 함)")]
+    [SerializeField] private Image characterImage;
+
     [Header("=== 타이밍 ===")]
     [Tooltip("들어오는 시간 (초)")]
     [SerializeField] private float slideInDuration = 0.6f;
@@ -23,6 +27,10 @@ public class SpawnAnnouncementBanner : MonoBehaviour
 
     [Tooltip("나가는 시간 (초)")]
     [SerializeField] private float slideOutDuration = 0.4f;
+
+    [Header("=== 텍스트 표시 ===")]
+    [Tooltip("텍스트 표시 여부 (꺼두면 이미지만 표시)")]
+    [SerializeField] private bool showText = true;
 
     [Header("=== 네온사인 효과 ===")]
     [Tooltip("글자 하나당 등장 간격 (초)")]
@@ -55,7 +63,7 @@ public class SpawnAnnouncementBanner : MonoBehaviour
     /// <summary>
     /// 배너 표시 (외부에서 호출)
     /// </summary>
-    public void Show(string characterName)
+    public void Show(string characterName, Sprite characterSprite = null)
     {
         if (bannerPanel == null) return;
 
@@ -63,6 +71,21 @@ public class SpawnAnnouncementBanner : MonoBehaviour
             StopCoroutine(_currentAnim);
 
         _neonAnimating = false;
+
+        // 캐릭터 이미지 설정
+        if (characterImage != null)
+        {
+            if (characterSprite != null)
+            {
+                characterImage.sprite = characterSprite;
+                characterImage.gameObject.SetActive(true);
+            }
+            else
+            {
+                characterImage.gameObject.SetActive(false);
+            }
+        }
+
         _currentAnim = StartCoroutine(BannerSequence(characterName));
     }
 
@@ -81,17 +104,25 @@ public class SpawnAnnouncementBanner : MonoBehaviour
         // 텍스트 설정
         if (announcementText != null)
         {
-            string particle = HasBatchim(characterName) ? "이" : "가";
-            announcementText.text = $"{characterName}{particle} 나타날 준비를 하고 있어요~!";
-            _originalColor = announcementText.color;
+            if (showText)
+            {
+                announcementText.gameObject.SetActive(true);
+                string particle = HasBatchim(characterName) ? "이" : "가";
+                announcementText.text = $"{characterName}{particle} 나타날 준비를 하고 있어요~!";
+                _originalColor = announcementText.color;
 
-            // 글자 0개부터 시작 (타이핑 효과)
-            announcementText.ForceMeshUpdate();
-            announcementText.maxVisibleCharacters = 0;
-            _revealedCount = 0;
+                // 글자 0개부터 시작 (타이핑 효과)
+                announcementText.ForceMeshUpdate();
+                announcementText.maxVisibleCharacters = 0;
+                _revealedCount = 0;
 
-            int totalChars = announcementText.textInfo.characterCount;
-            _charRevealTime = new float[totalChars];
+                int totalChars = announcementText.textInfo.characterCount;
+                _charRevealTime = new float[totalChars];
+            }
+            else
+            {
+                announcementText.gameObject.SetActive(false);
+            }
         }
 
         // 오른쪽 밖에서 시작
@@ -101,7 +132,7 @@ public class SpawnAnnouncementBanner : MonoBehaviour
         yield return SlideX(canvasW, 0f, slideInDuration, EaseOutCubic);
 
         // 네온사인: 한 글자씩 톡톡
-        if (announcementText != null)
+        if (showText && announcementText != null)
         {
             _neonAnimating = true;
             int totalChars = announcementText.textInfo.characterCount;
@@ -114,15 +145,12 @@ public class SpawnAnnouncementBanner : MonoBehaviour
 
                 yield return new WaitForSeconds(charRevealInterval);
             }
-        }
 
-        // 전부 다 나온 후 네온 잔광 마무리 대기
-        yield return new WaitForSeconds(glowFadeDuration);
-        _neonAnimating = false;
+            // 전부 다 나온 후 네온 잔광 마무리 대기
+            yield return new WaitForSeconds(glowFadeDuration);
+            _neonAnimating = false;
 
-        // 텍스트 원래 색으로 복구
-        if (announcementText != null)
-        {
+            // 텍스트 원래 색으로 복구
             announcementText.ForceMeshUpdate();
             announcementText.maxVisibleCharacters = 99999;
         }

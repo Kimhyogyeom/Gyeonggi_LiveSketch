@@ -1,0 +1,5 @@
+# 배경 슬라이드쇼 설정
+# displayTime = 이미지 표시 시간 (초)
+# fadeTime = 전환 페이드 시간 (초)
+displayTime=5
+fadeTime=1.5
