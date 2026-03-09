@@ -84,6 +84,9 @@ public class Model3DManager : MonoBehaviour
         [Range(0f, 5f)]
         public float waitMax = 2f;
 
+        [Tooltip("true면 이동 시 좌우반전 안 함 (항상 초기 방향 유지)")]
+        public bool disableFlip = false;
+
         [Header("=== 개별 스케일/회전 ===")]
         [Tooltip("스폰 스케일 (캐릭터별 크기)")]
         public Vector3 spawnScale = Vector3.one;
@@ -345,6 +348,7 @@ public class Model3DManager : MonoBehaviour
         public Vector3 baseRotation;
         public bool isExiting;
         public bool isDespawning; // 소멸 이펙트 진행 중
+        public bool disableFlip; // true면 좌우반전 안 함
         public Mesh originalMesh; // BakedFront 재구움용 원본 메시 캐시
 
         // 개인 배회 범위 (구역 밖 스폰 시 스폰 위치 기준으로 설정)
@@ -722,21 +726,24 @@ public class Model3DManager : MonoBehaviour
                 model.dampVelocity = Vector3.zero;
             }
 
-            // 좌우 방향 전환 (쿨다운)
-            model.flipCooldown -= Time.deltaTime;
-            if (model.flipCooldown <= 0f)
+            // 좌우 방향 전환 (쿨다운) - disableFlip이면 반전 안 함
+            if (!model.disableFlip)
             {
-                float dx = model.dampVelocity.x;
-                if (Mathf.Abs(dx) > 0.02f)
+                model.flipCooldown -= Time.deltaTime;
+                if (model.flipCooldown <= 0f)
                 {
-                    bool shouldFaceRight = dx > 0;
-                    if (model.facingRight != shouldFaceRight)
+                    float dx = model.dampVelocity.x;
+                    if (Mathf.Abs(dx) > 0.02f)
                     {
-                        model.facingRight = shouldFaceRight;
-                        Vector3 rot = model.baseRotation;
-                        rot.y += shouldFaceRight ? 0f : 180f;
-                        model.instance.transform.rotation = Quaternion.Euler(rot);
-                        model.flipCooldown = 0.5f;
+                        bool shouldFaceRight = dx > 0;
+                        if (model.facingRight != shouldFaceRight)
+                        {
+                            model.facingRight = shouldFaceRight;
+                            Vector3 rot = model.baseRotation;
+                            rot.y += shouldFaceRight ? 0f : 180f;
+                            model.instance.transform.rotation = Quaternion.Euler(rot);
+                            model.flipCooldown = 0.5f;
+                        }
                     }
                 }
             }
@@ -1000,6 +1007,7 @@ public class Model3DManager : MonoBehaviour
             dampVelocity = Vector3.zero,
             facingRight = true,
             flipCooldown = 0f,
+            disableFlip = entry.disableFlip,
             waitTimer = enableSpawnEffect ? spawnEffectGatherDuration + spawnEffectScaleDuration : 0f,
             baseRotation = entry.spawnRotation,
             personalMinX = pMinX,

@@ -102,6 +102,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8ebfc46a766fd1041882d281bcddbaec, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  jumpForce: 13
+  jumpForce: 14
   gravity: 15
   groundOffset: 0
+  randomVariance: 0.1

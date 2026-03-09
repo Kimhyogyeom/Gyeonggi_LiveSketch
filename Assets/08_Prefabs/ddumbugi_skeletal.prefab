@@ -201,3 +201,4 @@ MonoBehaviour:
   jumpForce: 0.5
   gravity: 0.2
   groundOffset: 0
+  randomVariance: 0.1
