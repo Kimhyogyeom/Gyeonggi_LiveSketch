@@ -91,14 +91,13 @@ public class SpawnAnnouncementBanner : MonoBehaviour
 
     IEnumerator BannerSequence(string characterName)
     {
-        float canvasW = GetCanvasWidth();
         float y = bannerPanel.anchoredPosition.y;
         float currentX = bannerPanel.anchoredPosition.x;
 
         // 현재 화면에 보이면 먼저 왼쪽으로 빠르게 퇴장
-        if (currentX > -canvasW * 0.9f && currentX < canvasW * 0.9f)
+        if (currentX > -2192f * 0.9f && currentX < 2192f * 0.9f)
         {
-            yield return SlideX(currentX, -canvasW, 0.2f, EaseInCubic);
+            yield return SlideX(currentX, -2192f, 0.2f, EaseInCubic);
         }
 
         // 텍스트 설정
@@ -126,10 +125,10 @@ public class SpawnAnnouncementBanner : MonoBehaviour
         }
 
         // 오른쪽 밖에서 시작
-        bannerPanel.anchoredPosition = new Vector2(canvasW, y);
+        bannerPanel.anchoredPosition = new Vector2(2192f, y);
 
         // 슈-웅 들어오기
-        yield return SlideX(canvasW, 0f, slideInDuration, EaseOutCubic);
+        yield return SlideX(2192f, 0f, slideInDuration, EaseOutCubic);
 
         // 네온사인: 한 글자씩 톡톡
         if (showText && announcementText != null)
@@ -159,10 +158,10 @@ public class SpawnAnnouncementBanner : MonoBehaviour
         yield return new WaitForSeconds(displayDuration);
 
         // 왼쪽으로 퇴장
-        yield return SlideX(0f, -canvasW, slideOutDuration, EaseInCubic);
+        yield return SlideX(0f, -2192f, slideOutDuration, EaseInCubic);
 
         // 오른쪽 밖으로 리셋 (다음 표시 대기)
-        bannerPanel.anchoredPosition = new Vector2(canvasW, y);
+        bannerPanel.anchoredPosition = new Vector2(2192f, y);
         _currentAnim = null;
     }
 
@@ -225,15 +224,7 @@ public class SpawnAnnouncementBanner : MonoBehaviour
     void SetOffScreenRight()
     {
         float y = bannerPanel.anchoredPosition.y;
-        bannerPanel.anchoredPosition = new Vector2(GetCanvasWidth(), y);
-    }
-
-    float GetCanvasWidth()
-    {
-        var canvas = GetComponentInParent<Canvas>();
-        if (canvas != null)
-            return ((RectTransform)canvas.transform).rect.width;
-        return Screen.width;
+        bannerPanel.anchoredPosition = new Vector2(2192f, y);
     }
 
     static float EaseOutCubic(float t) => 1f - Mathf.Pow(1f - t, 3f);

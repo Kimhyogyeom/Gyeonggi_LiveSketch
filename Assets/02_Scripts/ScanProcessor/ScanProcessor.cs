@@ -244,6 +244,7 @@ public class ScanProcessor : MonoBehaviour
             _sr.sprite = spr;
         }
 
+        modelManager?.TriggerBurstForLatest();
         Log("적용 완료");
     }
 

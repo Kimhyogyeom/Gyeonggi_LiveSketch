@@ -35,6 +35,13 @@ public class AnimalModelManager : MonoBehaviour
         new AnimalEntry { qrText = "파랑이" },
     };
 
+    [Header("=== 파티클 이펙트 ===")]
+    [Tooltip("생성 중 반복 재생될 파티클 프리팹 (A) - 모든 동물 공통")]
+    [SerializeField] private GameObject loopParticlePrefab;
+
+    [Tooltip("생성 완료 시 한 번만 재생될 파티클 프리팹 (B) - 모든 동물 공통")]
+    [SerializeField] private GameObject burstParticlePrefab;
+
     [Header("매칭 설정")]
     [SerializeField] private bool ignoreCase = true;
     [SerializeField] private bool allowPartialMatch = true;
@@ -69,6 +76,7 @@ public class AnimalModelManager : MonoBehaviour
         public GameObject instance;
         public SpriteRenderer spriteRenderer;
         public string qrText;
+        public GameObject loopParticleInstance;
     }
 
     /// <summary>
@@ -122,6 +130,15 @@ public class AnimalModelManager : MonoBehaviour
         CurrentSpriteRenderer = spriteRenderer;
         CurrentQRText = entry.qrText;
 
+        // 파티클 A: 생성 중 루프 파티클 시작
+        if (loopParticlePrefab != null)
+        {
+            var loopInst = Instantiate(loopParticlePrefab, instance.transform.position, Quaternion.identity, instance.transform);
+            foreach (var ps in loopInst.GetComponentsInChildren<ParticleSystem>())
+                ps.Play();
+            spawned.loopParticleInstance = loopInst;
+        }
+
         OnCharacterSpawned?.Invoke(instance, spriteRenderer);
 
         Debug.Log($"[AnimalModelManager] '{entry.qrText}' 2D 캐릭터 스폰 완료 (총 {_spawnedCharacters.Count}마리)");
@@ -133,6 +150,43 @@ public class AnimalModelManager : MonoBehaviour
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// 색상 적용 완료 시 호출: A 파티클 중지 + B 파티클 한 번 재생
+    /// </summary>
+    public void TriggerBurstForLatest()
+    {
+        if (_spawnedCharacters.Count == 0) return;
+
+        var spawned = _spawnedCharacters[_spawnedCharacters.Count - 1];
+
+        // A 중지
+        if (spawned.loopParticleInstance != null)
+        {
+            foreach (var ps in spawned.loopParticleInstance.GetComponentsInChildren<ParticleSystem>())
+                ps.Stop(true, ParticleSystemStopBehavior.StopEmitting);
+            Destroy(spawned.loopParticleInstance, 3f);
+            spawned.loopParticleInstance = null;
+        }
+
+        // B 한 번 재생 후 자동 제거
+        if (burstParticlePrefab != null)
+        {
+            var burstInst = Instantiate(burstParticlePrefab, spawned.instance.transform.position, Quaternion.identity, spawned.instance.transform);
+            foreach (var ps in burstInst.GetComponentsInChildren<ParticleSystem>())
+            {
+                var main = ps.main;
+                main.loop = false;
+                ps.Play();
+            }
+
+            // 파티클 최대 수명 계산 후 자동 제거
+            float maxDuration = 0f;
+            foreach (var ps in burstInst.GetComponentsInChildren<ParticleSystem>())
+                maxDuration = Mathf.Max(maxDuration, ps.main.duration + ps.main.startLifetime.constantMax);
+            Destroy(burstInst, maxDuration + 0.5f);
+        }
     }
 
     /// <summary>

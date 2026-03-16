@@ -28,6 +28,9 @@ public class SpawnEffect : MonoBehaviour
     private bool _hasCustomMat;
     private bool _hasCustomBurstMat;
     private float _range = 1f;        // 파티클 범위 배율
+    private GameObject _loopParticlePrefab;
+    private GameObject _burstParticlePrefab;
+    private GameObject _loopParticleInst;
 
     // 생성된 이펙트 오브젝트들 (정리용)
     private GameObject _fxRoot;
@@ -38,7 +41,7 @@ public class SpawnEffect : MonoBehaviour
     private bool _animatingText;
     private float _textAnimTime;
 
-    public void Play(Vector3 targetScale, float gatherDuration, float scaleUpDuration, Color color, string characterName = "", TMP_Text announceText = null, Material customMaterial = null, Material burstMaterial = null, float range = 1f)
+    public void Play(Vector3 targetScale, float gatherDuration, float scaleUpDuration, Color color, string characterName = "", TMP_Text announceText = null, Material customMaterial = null, Material burstMaterial = null, float range = 1f, GameObject loopParticlePrefab = null, GameObject burstParticlePrefab = null)
     {
         _targetScale = targetScale;
         _gatherDuration = gatherDuration;
@@ -46,6 +49,8 @@ public class SpawnEffect : MonoBehaviour
         _color = color;
         _characterName = characterName;
         _range = range;
+        _loopParticlePrefab = loopParticlePrefab;
+        _burstParticlePrefab = burstParticlePrefab;
 
         // 안내 텍스트 (인스펙터에서 연결된 외부 오브젝트)
         _announceText = announceText;
@@ -82,15 +87,23 @@ public class SpawnEffect : MonoBehaviour
         // ============================================
         // Phase 1: 에너지 응축 (서서히 강렬해짐)
         // ============================================
-        var gatherPS = CreateGatherSpiral();
-        var corePS = CreateEnergyCore();
-        var starTrailPS = CreateStarTrail();
-        var outerRingPS = CreateOuterGatherRing();
+        // [코드 생성 파티클 비활성화 - 프리팹 파티클로 대체]
+        // var gatherPS = CreateGatherSpiral();
+        // var corePS = CreateEnergyCore();
+        // var starTrailPS = CreateStarTrail();
+        // var outerRingPS = CreateOuterGatherRing();
+        // gatherPS.Play();
+        // corePS.Play();
+        // starTrailPS.Play();
+        // outerRingPS.Play();
 
-        gatherPS.Play();
-        corePS.Play();
-        starTrailPS.Play();
-        outerRingPS.Play();
+        // 파티클 A: 응축 시작과 동시에 루프 재생
+        if (_loopParticlePrefab != null)
+        {
+            _loopParticleInst = Instantiate(_loopParticlePrefab, _fxRoot.transform.position, Quaternion.identity, _fxRoot.transform);
+            foreach (var ps in _loopParticleInst.GetComponentsInChildren<ParticleSystem>(true))
+                ps.Play();
+        }
 
         // 렌더러 캐시 갱신
         _cachedRenderers = _fxRoot.GetComponentsInChildren<ParticleSystemRenderer>();
@@ -106,18 +119,12 @@ public class SpawnEffect : MonoBehaviour
             _textAnimTime = 0f;
         }
 
-        // 응축 중 점점 강렬해지는 연출
+        // 응축 대기 + 텍스트 애니메이션
         float gatherElapsed = 0f;
-        var gatherEmission = gatherPS.emission;
 
         while (gatherElapsed < _gatherDuration)
         {
             gatherElapsed += Time.deltaTime;
-            float progress = gatherElapsed / _gatherDuration;
-
-            // 시간 갈수록: 파티클 더 많이, 더 빠르게
-            float intensity = Mathf.Lerp(0.3f, 1f, progress * progress);
-            gatherEmission.rateOverTime = Mathf.Lerp(80f, 600f, intensity);
 
             // 텍스트 파도 + 깜빡이 애니메이션
             if (_animatingText && _announceText != null)
@@ -134,11 +141,6 @@ public class SpawnEffect : MonoBehaviour
             yield return null;
         }
 
-        gatherPS.Stop(true, ParticleSystemStopBehavior.StopEmitting);
-        corePS.Stop(true, ParticleSystemStopBehavior.StopEmitting);
-        starTrailPS.Stop(true, ParticleSystemStopBehavior.StopEmitting);
-        outerRingPS.Stop(true, ParticleSystemStopBehavior.StopEmitting);
-
         // 텍스트 비활성화 및 메시 복구
         _animatingText = false;
         if (_announceText != null)
@@ -152,42 +154,57 @@ public class SpawnEffect : MonoBehaviour
         // Phase 2: 팡!!! 대폭발
         // ============================================
 
-        // 큰 플래시 (화면 번쩍)
-        var flashPS = CreateFlashGlow();
-        flashPS.Emit(3);
+        // 화면 글리치 + 찢김
+        ScreenGlitchTear.Play();
+        yield return new WaitForSeconds(0.5f);
 
-        // 메인 폭발 (큰 파티클)
-        var burstPS = CreateMainBurst();
-        burstPS.Emit(200);
-
-        // 이중 충격파 링
-        var ringPS1 = CreateShockwaveRing(12f, 0.6f);
-        ringPS1.Emit(1);
-
-        // 컨페티 (알록달록 종이 조각)
-        var confettiPS = CreateConfettiBurst();
-        confettiPS.Emit(150);
-
-        // 반짝이 샤워 (작은 별들)
-        var sparklePS = CreateSparkleShower();
-        sparklePS.Emit(120);
-
-        // 렌더러 캐시 갱신 (폭발 파티클 추가됨)
-        _cachedRenderers = _fxRoot.GetComponentsInChildren<ParticleSystemRenderer>();
-
-        // 약간 딜레이된 2번째 충격파
-        yield return new WaitForSeconds(0.1f);
-        var ringPS2 = CreateShockwaveRing(8f, 0.8f);
-        ringPS2.Emit(1);
-
-        // 2차 미니 폭발 (여운)
-        yield return new WaitForSeconds(0.15f);
-        var miniBurstPS = CreateMiniBurst();
-        miniBurstPS.Emit(60);
+        // [코드 생성 폭발 파티클 비활성화 - 프리팹 파티클로 대체]
+        // var flashPS = CreateFlashGlow();
+        // flashPS.Emit(3);
+        // var burstPS = CreateMainBurst();
+        // burstPS.Emit(200);
+        // var ringPS1 = CreateShockwaveRing(12f, 0.6f);
+        // ringPS1.Emit(1);
+        // var confettiPS = CreateConfettiBurst();
+        // confettiPS.Emit(150);
+        // var sparklePS = CreateSparkleShower();
+        // sparklePS.Emit(120);
+        // _cachedRenderers = _fxRoot.GetComponentsInChildren<ParticleSystemRenderer>();
+        // yield return new WaitForSeconds(0.1f);
+        // var ringPS2 = CreateShockwaveRing(8f, 0.8f);
+        // ringPS2.Emit(1);
+        // yield return new WaitForSeconds(0.15f);
+        // var miniBurstPS = CreateMiniBurst();
+        // miniBurstPS.Emit(60);
 
         // ============================================
         // Phase 3: 모델 등장 (탄력 있는 팝!)
         // ============================================
+
+        // 모델 등장 시작 = 화면 번쩍 + A 종료 + B 즉시 팡!
+        ScreenFlash.Instance?.Flash();
+
+        if (_loopParticleInst != null)
+        {
+            foreach (var ps in _loopParticleInst.GetComponentsInChildren<ParticleSystem>(true))
+                ps.Stop(true, ParticleSystemStopBehavior.StopEmitting);
+            Destroy(_loopParticleInst, 3f);
+            _loopParticleInst = null;
+        }
+        if (_burstParticlePrefab != null)
+        {
+            var burstInst = Instantiate(_burstParticlePrefab, _fxRoot.transform.position, Quaternion.identity, _fxRoot.transform);
+            float maxDuration = 0f;
+            foreach (var ps in burstInst.GetComponentsInChildren<ParticleSystem>(true))
+            {
+                var main = ps.main;
+                main.loop = false;
+                ps.Play();
+                maxDuration = Mathf.Max(maxDuration, ps.main.duration + ps.main.startLifetime.constantMax);
+            }
+            Destroy(burstInst, maxDuration + 0.5f);
+        }
+
         float elapsed = 0f;
         while (elapsed < _scaleUpDuration)
         {

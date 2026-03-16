@@ -198,6 +198,13 @@ public class Model3DManager : MonoBehaviour
     [Tooltip("스폰 안내 배너 (슬라이드 UI, 비워두면 사용 안 함)")]
     [SerializeField] private SpawnAnnouncementBanner spawnBanner;
 
+    [Header("=== 에셋 파티클 이펙트 (공통) ===")]
+    [Tooltip("생성 중 반복 재생될 파티클 프리팹 (A) - 모든 동물 공통")]
+    [SerializeField] private GameObject loopParticlePrefab;
+
+    [Tooltip("생성 완료 시 한 번만 재생될 파티클 프리팹 (B) - 모든 동물 공통")]
+    [SerializeField] private GameObject burstParticlePrefab;
+
     [Header("=== 머티리얼 설정 ===")]
     [Tooltip("기존 Material 무시하고 항상 새로 생성")]
     [SerializeField] private bool forceNewMaterial = true;
@@ -1033,7 +1040,7 @@ public class Model3DManager : MonoBehaviour
         {
             var effect = instance.AddComponent<SpawnEffect>();
             TMP_Text effectText = (spawnBanner != null) ? null : spawnAnnouncementText;
-            effect.Play(entry.spawnScale, spawnEffectGatherDuration, spawnEffectScaleDuration, entry.effectColor, entry.qrText, effectText, entry.effectMaterial, entry.burstEffectMaterial, entry.effectRange);
+            effect.Play(entry.spawnScale, spawnEffectGatherDuration, spawnEffectScaleDuration, entry.effectColor, entry.qrText, effectText, entry.effectMaterial, entry.burstEffectMaterial, entry.effectRange, loopParticlePrefab, burstParticlePrefab);
         }
 
         // 스폰 공통 효과음 재생
