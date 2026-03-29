@@ -447,7 +447,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!224 &108429485
 RectTransform:
   m_ObjectHideFlags: 0
@@ -3377,7 +3377,7 @@ MonoBehaviour:
     waitMin: 0.1
     waitMax: 5
     disableFlip: 0
-    spawnScale: {x: 2.2, y: 2.2, z: 2.2}
+    spawnScale: {x: 2.5, y: 2.5, z: 2.5}
     spawnRotation: {x: 0, y: 180, z: 0}
     effectColor: {r: 1, g: 1, b: 1, a: 1}
     effectMaterial: {fileID: 2100000, guid: 6ebd1c70ebbc399409663754ff047b9e, type: 2}
@@ -3423,15 +3423,15 @@ MonoBehaviour:
     despawnEffectRange: 1
     despawnAudioClip: {fileID: 0}
   - qrText: "\uB9F9\uAF41\uC774"
-    modelPrefab: {fileID: 3723470733310245525, guid: 6d97a944a205745439a309270ed45f88, type: 3}
+    modelPrefab: {fileID: 8547859797434855114, guid: e8bdb899867c4f94eb96e043a9bd3a23, type: 3}
     materialIndex: 0
     texturePropertyName: _MainTex
-    flipX: 0
+    flipX: 1
     flipY: 0
-    offsetX: -0.002
-    offsetY: -0.005
-    scaleX: 4.03
-    scaleY: 1.44
+    offsetX: 0
+    offsetY: -0.015
+    scaleX: 2.95
+    scaleY: 1.57
     rotation: 0
     projectionType: 3
     bakeAxis: 4
@@ -3463,9 +3463,9 @@ MonoBehaviour:
     flipX: 1
     flipY: 0
     offsetX: -0.018
-    offsetY: -0.01
+    offsetY: -0.014
     scaleX: 2.39
-    scaleY: 1.69
+    scaleY: 1.71
     rotation: 0
     projectionType: 3
     bakeAxis: 4
@@ -3530,8 +3530,8 @@ MonoBehaviour:
     texturePropertyName: _MainTex
     flipX: 1
     flipY: 0
-    offsetX: 0.001
-    offsetY: 0
+    offsetX: 0.003
+    offsetY: -0.005
     scaleX: 1.85
     scaleY: 2.2
     rotation: 0
@@ -3598,10 +3598,10 @@ MonoBehaviour:
     texturePropertyName: _MainTex
     flipX: 1
     flipY: 1
-    offsetX: 0.01
-    offsetY: 0.006
+    offsetX: 0.013
+    offsetY: 0
     scaleX: 3
-    scaleY: 1.5
+    scaleY: 1.53
     rotation: 0
     projectionType: 3
     bakeAxis: 0
@@ -3633,7 +3633,7 @@ MonoBehaviour:
     flipX: 1
     flipY: 0
     offsetX: 0.01
-    offsetY: 0.007
+    offsetY: 0.003
     scaleX: 2.031
     scaleY: 1.66
     rotation: 0
@@ -3649,7 +3649,7 @@ MonoBehaviour:
     waitMin: 0
     waitMax: 0
     disableFlip: 0
-    spawnScale: {x: 2.2, y: 2.2, z: 2.2}
+    spawnScale: {x: 2.5, y: 2.5, z: 2.5}
     spawnRotation: {x: 0, y: 180, z: 0}
     effectColor: {r: 1, g: 1, b: 1, a: 1}
     effectMaterial: {fileID: 2100000, guid: 6ebd1c70ebbc399409663754ff047b9e, type: 2}
@@ -3726,6 +3726,7 @@ MonoBehaviour:
   cpBlendSmoothness: 0.08
   cpBaseColor: {r: 1, g: 1, b: 1, a: 1}
   cpFadeThreshold: 0
+  cpDepthUVPush: 0
   cpShadingStrength: 0.3
   cpLightDir: {x: 0.2, y: 0.5, z: -1}
   cpAmbientLight: 0.6

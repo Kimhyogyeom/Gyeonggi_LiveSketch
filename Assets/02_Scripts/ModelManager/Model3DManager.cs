@@ -278,6 +278,10 @@ public class Model3DManager : MonoBehaviour
     [Range(0f, 1f)]
     [SerializeField] private float cpFadeThreshold = 0.3f;
 
+    [Tooltip("깊이 UV 보정 (팔 왜곡 방지, 0=끔, 깊은 버텍스의 UV를 바깥으로 밀어냄)")]
+    [Range(0f, 2f)]
+    [SerializeField] private float cpDepthUVPush = 0f;
+
     [Tooltip("3D 입체감 강도 (0=플랫/무조명, 1=최대 음영)")]
     [Range(0f, 1f)]
     [SerializeField] private float cpShadingStrength = 0.3f;
@@ -326,6 +330,7 @@ public class Model3DManager : MonoBehaviour
     private bool _lastUseColorProjection;
     private float _lastCPPaperBrightness, _lastCPPaperSaturation;
     private float _lastCPBlendSmoothness, _lastCPFadeThreshold;
+    private float _lastCPDepthUVPush;
     private Color _lastCPBaseColor;
     private float _lastCPShadingStrength, _lastCPAmbientLight;
     private Vector3 _lastCPLightDir;
@@ -400,6 +405,7 @@ public class Model3DManager : MonoBehaviour
                 _lastCPPaperSaturation != cpPaperSaturation ||
                 _lastCPBlendSmoothness != cpBlendSmoothness ||
                 _lastCPFadeThreshold != cpFadeThreshold ||
+                _lastCPDepthUVPush != cpDepthUVPush ||
                 _lastCPBaseColor != cpBaseColor ||
                 _lastCPShadingStrength != cpShadingStrength ||
                 _lastCPAmbientLight != cpAmbientLight ||
@@ -411,6 +417,11 @@ public class Model3DManager : MonoBehaviour
                 _lastCPPaperSaturation = cpPaperSaturation;
                 _lastCPBlendSmoothness = cpBlendSmoothness;
                 _lastCPFadeThreshold = cpFadeThreshold;
+
+                // 깊이 UV 보정값 변경 시 UV 재베이킹
+                bool needRebake = _lastCPDepthUVPush != cpDepthUVPush;
+                _lastCPDepthUVPush = cpDepthUVPush;
+
                 _lastCPBaseColor = cpBaseColor;
                 _lastCPShadingStrength = cpShadingStrength;
                 _lastCPAmbientLight = cpAmbientLight;
@@ -420,9 +431,18 @@ public class Model3DManager : MonoBehaviour
                 {
                     if (model.material != null && model.material.HasProperty("_ProjectionAxis"))
                         ApplyColorProjectionParams(model.material);
+
+                    if (needRebake && model.renderer != null)
+                    {
+                        var e = FindEntry(model.qrText);
+                        if (e != null)
+                            BakeFrontProjectionUVs(model.renderer, e);
+                    }
                 }
 
-                Debug.Log("[Model3DManager] ColorProjection 전역 파라미터 갱신");
+                Debug.Log(needRebake
+                    ? $"[Model3DManager] 깊이 UV 보정 변경 → UV 재베이킹 (push={cpDepthUVPush:F2})"
+                    : "[Model3DManager] ColorProjection 전역 파라미터 갱신");
             }
         }
 
@@ -1526,9 +1546,14 @@ public class Model3DManager : MonoBehaviour
         bool flipU = (entry.bakeAxis == BakeAxis.NegZ_BackFront || entry.bakeAxis == BakeAxis.NegX_RightLeft
                     || entry.bakeAxis == BakeAxis.NegY_BottomTop);
 
-        // 1단계: 투영 평면의 2D 좌표 추출
+        // 깊이 축 판별 (투영 평면에 수직인 축)
+        bool depthFlip = (entry.bakeAxis == BakeAxis.NegZ_BackFront || entry.bakeAxis == BakeAxis.NegX_RightLeft
+                        || entry.bakeAxis == BakeAxis.NegY_BottomTop);
+
+        // 1단계: 투영 평면의 2D 좌표 + 깊이 추출
         float[] projU = new float[vertices.Length];
         float[] projV = new float[vertices.Length];
+        float[] depthVals = new float[vertices.Length];
 
         for (int i = 0; i < vertices.Length; i++)
         {
@@ -1536,11 +1561,19 @@ public class Model3DManager : MonoBehaviour
             {
                 projU[i] = vertices[i].x;
                 projV[i] = vertices[i].z;
+                depthVals[i] = vertices[i].y;
+            }
+            else if (useZForU)
+            {
+                projU[i] = vertices[i].z;
+                projV[i] = vertices[i].y;
+                depthVals[i] = vertices[i].x;
             }
             else
             {
-                projU[i] = useZForU ? vertices[i].z : vertices[i].x;
+                projU[i] = vertices[i].x;
                 projV[i] = vertices[i].y;
+                depthVals[i] = vertices[i].z;
             }
         }
 
@@ -1586,11 +1619,32 @@ public class Model3DManager : MonoBehaviour
         if (rangeX < 0.001f) rangeX = 1f;
         if (rangeY < 0.001f) rangeY = 1f;
 
-        // 4단계: 정규화 + flip/scale/offset
+        // 4단계: 깊이 정규화 (UV 보정용)
+        float minD = float.MaxValue, maxD = float.MinValue;
+        for (int i = 0; i < depthVals.Length; i++)
+        {
+            if (depthVals[i] < minD) minD = depthVals[i];
+            if (depthVals[i] > maxD) maxD = depthVals[i];
+        }
+        float depthRange = maxD - minD;
+        if (depthRange < 0.001f) depthRange = 1f;
+
+        // 5단계: 정규화 + 깊이 UV 보정 + flip/scale/offset
+        float pushStrength = cpDepthUVPush;
+
         for (int i = 0; i < vertices.Length; i++)
         {
             float u = (projU[i] - minX) / rangeX;
             float v = (projV[i] - minY) / rangeY;
+
+            // 깊이 UV 보정: 깊은 버텍스(팔 등)의 U를 바깥으로 밀어냄
+            if (pushStrength > 0.001f)
+            {
+                float nd = (depthVals[i] - minD) / depthRange;
+                if (depthFlip) nd = 1f - nd;
+                float push = nd * pushStrength;
+                u += (u - 0.5f) * push;
+            }
 
             if (flipU) u = 1f - u;
 
@@ -1619,7 +1673,7 @@ public class Model3DManager : MonoBehaviour
             if (mf != null) mf.sharedMesh = bakedMesh;
         }
 
-        Debug.Log($"[Model3DManager] BakedFront UV 적용: 축={entry.bakeAxis}, 정점 {vertices.Length}개, U범위[{minX:F2}~{maxX:F2}] V범위[{minY:F2}~{maxY:F2}], rotation={entry.rotation}°(정점 사전회전)");
+        Debug.Log($"[Model3DManager] BakedFront UV 적용: 축={entry.bakeAxis}, 정점 {vertices.Length}개, U범위[{minX:F2}~{maxX:F2}] V범위[{minY:F2}~{maxY:F2}], 깊이보정={pushStrength:F2}, rotation={entry.rotation}°");
     }
 
     /// <summary>
